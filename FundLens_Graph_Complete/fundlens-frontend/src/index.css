@@ -1,0 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #060C1E; color: #F0F4F8; font-family: 'DM Sans', sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden; }
+.sigma-container { background: #060C1E !important; }
+.sigma-container canvas { background: #060C1E !important; }
+@keyframes spin-fade { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
+@keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.5; } }
+@keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0A142F; }
+::-webkit-scrollbar-thumb { background: #12244E; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #1D3060; }

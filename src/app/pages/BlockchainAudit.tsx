@@ -1,8 +1,10 @@
-import { Link2, FileDown, ExternalLink, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { Link2, FileDown, ExternalLink, ChevronDown, Loader2 } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { useBlockchain } from '../../hooks/useBlockchain';
 
 export default function BlockchainAudit() {
   const [expandedBlock, setExpandedBlock] = useState<number | null>(null);
+  const { chain, verification, loading } = useBlockchain('CASE-2847');
 
   const blocks = [
     {
@@ -48,6 +50,16 @@ export default function BlockchainAudit() {
       details: 'STR submitted to FIU-IND · Submission hash: 0x8f7a...3b9c · FIU acknowledgement recorded',
     },
   ];
+
+  const displayBlocks = chain?.blocks || blocks;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#E31E24]" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white p-8">
@@ -101,7 +113,7 @@ export default function BlockchainAudit() {
           <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-[#E31E24] opacity-30" />
 
           <div className="space-y-4">
-            {blocks.map((block, idx) => (
+            {displayBlocks.map((block: any, idx: number) => (
               <div key={idx} className="relative">
                 {/* Connector circles */}
                 <div className="absolute left-8 top-6 w-3 h-3 rounded-full bg-[#E31E24] border-2 border-white transform -translate-x-1/2 z-10" />
@@ -112,10 +124,10 @@ export default function BlockchainAudit() {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
                       <span className="text-[#E31E24] font-bold" style={{ fontFamily: 'DM Mono' }}>
-                        Block #{block.number}
+                        Block #{block.block_id || block.number}
                       </span>
-                      <span className="px-2 py-1 bg-green-500 text-white rounded text-xs font-semibold">
-                        Verified
+                      <span className={`px-2 py-1 ${block.verified !== false ? 'bg-green-500' : 'bg-red-500'} text-white rounded text-xs font-semibold`}>
+                        {block.verified !== false ? 'Verified' : 'Tampered'}
                       </span>
                     </div>
                     <span className="text-gray-700 text-xs" style={{ fontFamily: 'DM Mono' }}>
@@ -125,15 +137,15 @@ export default function BlockchainAudit() {
 
                   {/* Block hash */}
                   <div className="text-gray-700 text-xs mb-3" style={{ fontFamily: 'DM Mono' }}>
-                    {block.hash}
+                    {block.block_hash || block.hash}
                   </div>
 
                   {/* Event description */}
                   <div className="text-gray-900 font-semibold mb-1">
-                    {block.event}
+                    {block.event_label || block.event}
                   </div>
                   <div className="text-gray-700 text-sm">
-                    {block.details}
+                    {block.details || `Payload hash: ${block.payload_hash}`}
                   </div>
                 </div>
               </div>
@@ -164,7 +176,7 @@ export default function BlockchainAudit() {
                 <div>
                   <div className="text-xs text-gray-700 mb-2">Block hash:</div>
                   <div className="bg-gray-50 border border-gray-200 rounded p-3 text-[#E31E24] text-sm break-all" style={{ fontFamily: 'DM Mono' }}>
-                    0x3a8f7b2e9c1d4e8a2f9b5d3c8f7a6b5c4e2f1a8d3b9c7e6a5f4d2c1b8a9e7f3a
+                    {displayBlocks[0]?.block_hash || '0x3a8f7b2e9c1d4e8a2f9b5d3c8f7a6b5c4e2f1a8d3b9c7e6a5f4d2c1b8a9e7f3a'}
                   </div>
                 </div>
                 <div>

@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router';
-import { ArrowLeft, Download, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, Loader2 } from 'lucide-react';
 import GraphNode from '../components/GraphNode';
 import FlowArrow from '../components/FlowArrow';
 import NodeTooltip from '../components/NodeTooltip';
+import { useGraphData } from '../../hooks/useGraphData';
+import { useAlertDetail } from '../../hooks/useAlerts';
 
 interface NodeData {
   id: string;
@@ -28,121 +30,148 @@ interface ArrowData {
   curved?: boolean;
 }
 
+// Format amount for display: 4723000 → "₹47.2L"
+function formatAmount(amount: number): string {
+  if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
+  if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
+  if (amount >= 1000) return `₹${(amount / 1000).toFixed(1)}K`;
+  return `₹${amount}`;
+}
+
+// Map risk_level to node style
+function getNodeStyle(node: any): { color: NodeData['color'], radius: number, glow?: boolean, critical?: boolean } {
+  if (node.is_hub) return { color: 'red', radius: 32, glow: true, critical: true };
+  if (node.is_origin) return { color: 'amber', radius: 34, glow: true };
+  if (node.risk_level === 'critical') return { color: 'red', radius: 26 };
+  return { color: 'amber', radius: 22 };
+}
+
 export default function FundFlowGraph() {
   const navigate = useNavigate();
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
 
-  // Define node positions (percentage-based for responsiveness)
-  const nodes: NodeData[] = [
-    {
-      id: 'ACC-0041',
-      x: 15,
-      y: 50,
-      radius: 34,
-      label: 'ACC-0041',
-      sublabel: 'Dormant→Active',
-      timestamp: '14:23',
-      color: 'amber',
-      glow: true,
-    },
-    {
-      id: 'ACC-0112',
-      x: 32,
-      y: 35,
-      radius: 22,
-      label: 'ACC-0112',
-      amount: '₹7.8L',
-      timestamp: '14:28',
-      color: 'amber',
-    },
-    {
-      id: 'ACC-0203',
-      x: 32,
-      y: 65,
-      radius: 22,
-      label: 'ACC-0203',
-      amount: '₹9.1L',
-      timestamp: '14:31',
-      color: 'amber',
-    },
-    {
-      id: 'ACC-0089',
-      x: 50,
-      y: 50,
-      radius: 32,
-      label: 'ACC-0089',
-      amount: 'Hub ₹46.8L',
-      timestamp: '14:45',
-      color: 'red',
-      glow: true,
-      critical: true,
-    },
-    {
-      id: 'ACC-0317',
-      x: 68,
-      y: 35,
-      radius: 22,
-      label: 'ACC-0317',
-      amount: '₹8.4L',
-      timestamp: '14:52',
-      color: 'amber',
-    },
-    {
-      id: 'ACC-0455',
-      x: 68,
-      y: 65,
-      radius: 22,
-      label: 'ACC-0455',
-      amount: '₹8.9L',
-      timestamp: '14:55',
-      color: 'amber',
-    },
-    {
-      id: 'ACC-0041-return',
-      x: 85,
-      y: 50,
-      radius: 30,
-      label: 'ACC-0041',
-      sublabel: 'Origin ← Return',
-      timestamp: '15:02',
-      color: 'teal-dashed',
-    },
-  ];
+  const caseId = 'CASE-2847';
+  const { graphData, loading } = useGraphData(caseId);
+  const { detail } = useAlertDetail(caseId);
 
-  const arrows: ArrowData[] = [
-    { id: 'a1', from: nodes[0], to: nodes[1], amount: '₹7.8L' },
-    { id: 'a2', from: nodes[0], to: nodes[2], amount: '₹9.1L' },
-    { id: 'a3', from: nodes[1], to: nodes[3], amount: '₹7.8L' },
-    { id: 'a4', from: nodes[2], to: nodes[3], amount: '₹9.1L' },
-    { id: 'a5', from: nodes[3], to: nodes[4], amount: '₹8.4L' },
-    { id: 'a6', from: nodes[3], to: nodes[5], amount: '₹8.9L' },
-    { id: 'a7', from: nodes[4], to: nodes[6], amount: '₹8.4L' },
-    { id: 'a8', from: nodes[5], to: nodes[6], amount: '₹8.9L' },
-    {
-      id: 'a9',
-      from: nodes[3],
-      to: nodes[6],
-      amount: '₹29.5L',
-      color: 'red',
-      curved: true,
-    },
-  ];
-
-  const handleNodeHover = (nodeId: string | null, x?: number, y?: number) => {
-    setHoveredNode(nodeId);
-    if (nodeId && x !== undefined && y !== undefined) {
-      setTooltipPosition({ x, y });
+  // Define node positions based on API graph data
+  const { nodes, arrows } = useMemo(() => {
+    if (!graphData?.nodes?.length) {
+      return { nodes: [], arrows: [] };
     }
-  };
 
-  const handleGenerateSTR = () => {
-    navigate('/str-generation');
-  };
+    const apiNodes = graphData.nodes;
+    const apiEdges = graphData.edges;
 
+    const originNode = apiNodes.find((n: any) => n.is_origin);
+    const hubNode = apiNodes.find((n: any) => n.is_hub);
+    const others = apiNodes.filter((n: any) => !n.is_origin && !n.is_hub);
+
+    const svgNodes: NodeData[] = [];
+
+    // Place origin at left
+    if (originNode) {
+      svgNodes.push({
+        id: originNode.id,
+        x: 15, y: 50, ...getNodeStyle(originNode),
+        label: originNode.label,
+        sublabel: originNode.is_dormant ? 'Dormant→Active' : undefined,
+      });
+    }
+
+    // Place intermediaries in a grid
+    const leftIntermediaries = others.filter((_, i: number) => i < Math.ceil(others.length / 2));
+    const rightIntermediaries = others.filter((_, i: number) => i >= Math.ceil(others.length / 2));
+
+    leftIntermediaries.forEach((node: any, i: number) => {
+      const yPos = 35 + (i * 30 / Math.max(leftIntermediaries.length - 1, 1));
+      svgNodes.push({
+        id: node.id,
+        x: 32, y: leftIntermediaries.length === 1 ? 35 : yPos,
+        ...getNodeStyle(node),
+        label: node.id,
+        amount: formatAmount(node.amount),
+      });
+    });
+
+    // Place hub at center
+    if (hubNode) {
+      svgNodes.push({
+        id: hubNode.id,
+        x: 50, y: 50, ...getNodeStyle(hubNode),
+        label: hubNode.id,
+        amount: `Hub ${formatAmount(hubNode.amount)}`,
+      });
+    }
+
+    rightIntermediaries.forEach((node: any, i: number) => {
+      const yPos = 35 + (i * 30 / Math.max(rightIntermediaries.length - 1, 1));
+      svgNodes.push({
+        id: node.id,
+        x: 68, y: rightIntermediaries.length === 1 ? 35 : yPos,
+        ...getNodeStyle(node),
+        label: node.id,
+        amount: formatAmount(node.amount),
+      });
+    });
+
+    // Return node at right
+    if (originNode && detail?.typology?.includes('Round-trip')) {
+      svgNodes.push({
+        id: `${originNode.id}-return`,
+        x: 85, y: 50, radius: 30,
+        label: originNode.id,
+        sublabel: 'Origin ← Return',
+        color: 'teal-dashed',
+      });
+    }
+
+    // Build arrows
+    const nodeMap: Record<string, NodeData> = {};
+    svgNodes.forEach(n => { nodeMap[n.id] = n; });
+
+    const svgArrows: ArrowData[] = [];
+    apiEdges.forEach((edge: any, i: number) => {
+      const fromNode = nodeMap[edge.source];
+      const toNode = nodeMap[edge.target];
+      if (fromNode && toNode) {
+        svgArrows.push({
+          id: `edge-${i}`,
+          from: { x: fromNode.x, y: fromNode.y },
+          to: { x: toNode.x, y: toNode.y },
+          amount: formatAmount(edge.amount),
+        });
+      }
+    });
+
+    // If round-trip, add back arrow
+    if (hubNode && originNode && detail?.typology?.includes('Round-trip')) {
+      svgArrows.push({
+        id: 'edge-return',
+        from: nodeMap[hubNode.id],
+        to: nodeMap[`${originNode.id}-return`],
+        amount: formatAmount(originNode.amount * 0.6), // mock logic
+        color: 'red',
+        curved: true,
+      });
+    }
+
+    return { nodes: svgNodes, arrows: svgArrows };
+  }, [graphData, detail]);
   const handleNodeClick = (nodeId: string) => {
-    navigate(`/entity/${nodeId}`);
+    // If it's a return node, extract original id
+    const id = nodeId.replace('-return', '');
+    navigate(`/entity/${id}`);
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#E31E24]" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white relative">
@@ -252,15 +281,15 @@ export default function FundFlowGraph() {
           <div className="text-xs text-gray-700 mb-3">Typology detected</div>
           <div className="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-md mb-4">
             <div className="w-2 h-2 rounded-full bg-[#E31E24]" />
-            <span className="text-sm text-gray-900 font-medium">Round-trip Layering</span>
+            <span className="text-sm text-gray-900 font-medium">{detail?.typology || 'Round-trip Layering'}</span>
           </div>
           <div className="space-y-2 mb-4 text-xs" style={{ fontFamily: 'DM Mono' }}>
             <div className="text-gray-700">
-              <span className="text-gray-900">3 hops</span> · <span className="text-gray-900">₹47.2L</span> cycled
+              <span className="text-gray-900">{detail?.hops || 3} hops</span> · <span className="text-gray-900">₹{detail ? (detail.total_amount/100000).toFixed(1) : '47.2'}L</span> cycled
             </div>
             <div className="text-gray-700">
-              <span className="text-gray-900">6h 14m</span> · GNN confidence{' '}
-              <span className="text-[#E31E24]">94%</span>
+              <span className="text-gray-900">{detail?.duration_display || '6h 14m'}</span> · GNN confidence{' '}
+              <span className="text-[#E31E24]">{detail?.confidence || '94%'}</span>
             </div>
           </div>
           <div className="flex gap-2">

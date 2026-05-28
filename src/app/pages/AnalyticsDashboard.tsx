@@ -1,17 +1,16 @@
-import { ArrowUp, Activity, AlertTriangle, FileCheck, FolderOpen, RefreshCw, CheckCircle } from 'lucide-react';
+import { ArrowUp, Activity, AlertTriangle, FileCheck, FolderOpen, RefreshCw, CheckCircle, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
+import { useAnalytics } from '../../hooks/useAnalytics';
 
 export default function AnalyticsDashboard() {
   const navigate = useNavigate();
+  const { data, loading, error } = useAnalytics();
 
-  const typologyData = [
-    { label: 'Round-trip Layering', value: 47, color: '#EF4444' },
-    { label: 'Structuring/Smurfing', value: 38, color: '#F59E0B' },
-    { label: 'Dormant Activation', value: 31, color: '#F59E0B' },
-    { label: 'Fan-out/Fan-in', value: 24, color: '#00C9A7' },
-    { label: 'PEP Linkage', value: 18, color: '#3B82F6' },
-    { label: 'Other', value: 12, color: '#6B7280' },
-  ];
+  const typologyData = data?.top_typologies.map((t, i) => ({
+    label: t.name,
+    value: t.count,
+    color: ['#EF4444', '#F59E0B', '#F59E0B', '#00C9A7', '#3B82F6', '#6B7280'][i % 6]
+  })) || [];
 
   const investigators = [
     { initials: 'AK', name: 'Anjali Kapoor', cases: 12, avgTime: '2.3h', isTop: true },
@@ -31,6 +30,14 @@ export default function AnalyticsDashboard() {
     { time: '09:28:55', icon: FileCheck, desc: 'STR submitted to FIU-IND', ref: 'STR-041' },
     { time: '08:17:32', icon: AlertTriangle, desc: 'Alert triggered', ref: 'CASE-2844' },
   ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#E31E24]" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white">
@@ -58,7 +65,7 @@ export default function AnalyticsDashboard() {
           <div className="bg-gray-50 rounded-xl p-6">
             <div className="text-xs text-gray-600 mb-2">Alerts this week</div>
             <div className="text-gray-900 text-[32px] font-bold mb-2" style={{ fontFamily: 'Syne' }}>
-              47
+              {data?.alerts_this_week || 47}
             </div>
             <div className="flex items-center gap-1 text-[#E31E24] text-xs">
               <ArrowUp className="w-3 h-3" />
@@ -70,25 +77,25 @@ export default function AnalyticsDashboard() {
           <div className="bg-gray-50 rounded-xl p-6">
             <div className="text-xs text-gray-600 mb-2">Confirmed fraud</div>
             <div className="text-[#E31E24] text-[32px] font-bold mb-2" style={{ fontFamily: 'Syne' }}>
-              8
+              {data?.critical_count || 8}
             </div>
-            <div className="text-[#E31E24] text-[11px]">₹3.2 Cr prevented</div>
+            <div className="text-[#E31E24] text-[11px]">₹{((data?.total_amount_flagged || 32000000) / 10000000).toFixed(1)} Cr prevented</div>
           </div>
 
           {/* STRs filed */}
           <div className="bg-gray-50 rounded-xl p-6">
             <div className="text-xs text-gray-600 mb-2">STRs filed</div>
             <div className="text-[#E31E24] text-[32px] font-bold mb-2" style={{ fontFamily: 'Syne' }}>
-              3
+              {data?.total_cases || 3}
             </div>
             <div className="text-[#E31E24] text-[11px]">0 missed deadlines</div>
           </div>
 
           {/* Avg detection time */}
           <div className="bg-gray-50 rounded-xl p-6">
-            <div className="text-xs text-gray-600 mb-2">Avg detection time</div>
+            <div className="text-xs text-gray-600 mb-2">Avg resolution time</div>
             <div className="text-[#E31E24] text-[32px] font-bold mb-2" style={{ fontFamily: 'Syne' }}>
-              0.8s
+              {data?.avg_resolution_time || '0.8s'}
             </div>
             <div className="text-gray-600 text-[11px]">Industry avg: 3–5 days</div>
           </div>
@@ -99,7 +106,7 @@ export default function AnalyticsDashboard() {
             <div className="text-[#3B82F6] text-[32px] font-bold mb-2" style={{ fontFamily: 'Syne' }}>
               94.2%
             </div>
-            <div className="text-gray-600 text-[11px]">Last 30 days · 0.3% false positives</div>
+            <div className="text-gray-600 text-[11px]">Last 30 days · {(data?.false_positive_rate || 0.003) * 100}% false positives</div>
           </div>
         </div>
 
@@ -122,7 +129,7 @@ export default function AnalyticsDashboard() {
                     <div
                       className="absolute h-full rounded"
                       style={{
-                        width: `${(item.value / 47) * 100}%`,
+                        width: `${(item.value / (typologyData[0]?.value || 1)) * 100}%`,
                         backgroundColor: item.color,
                       }}
                     />

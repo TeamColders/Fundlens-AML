@@ -1,0 +1,13 @@
+# FundLens evidence_chain — dependencies
+# Demo mode (SQLite): NO external dependencies — uses Python stdlib only
+# Production mode (Hyperledger Fabric): install fabric-sdk-py
+
+# ── Demo mode: stdlib only ────────────────────────────────────────
+# hashlib    — built-in
+# json       — built-in
+# sqlite3    — built-in
+# pathlib    — built-in
+# dataclasses — built-in (Python 3.7+)
+
+# ── Production mode (uncomment when ready) ────────────────────────
+# fabric-sdk-py==0.9.0

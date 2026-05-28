@@ -1,11 +1,21 @@
-import { ArrowLeft, Check, Edit3, ExternalLink, Save, Download, Globe } from 'lucide-react';
+import { ArrowLeft, Check, Edit3, ExternalLink, Save, Download, Globe, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import MiniFlowGraph from '../components/MiniFlowGraph';
+import { useSTRGeneration } from '../../hooks/useSTRGeneration';
+import { useBlockchain } from '../../hooks/useBlockchain';
 
 export default function STRGeneration() {
   const navigate = useNavigate();
   const [language, setLanguage] = useState<'EN' | 'HI'>('EN');
+
+  const { stage, message, progress, report, error, generating, generate } = useSTRGeneration();
+  const { chain } = useBlockchain('CASE-2847');
+
+  // Auto-start generation on mount
+  useEffect(() => {
+    generate('CASE-2847');
+  }, [generate]);
 
   const today = new Date().toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -14,9 +24,38 @@ export default function STRGeneration() {
   });
 
   const handleExport = () => {
-    // Add your export logic here
     console.log('Exporting PDF');
   };
+
+  const stages = [
+    { label: 'Analysing pattern', key: 'analysing_pattern' },
+    { label: 'Compiling evidence', key: 'compiling_evidence' },
+    { label: 'Drafting narrative', key: 'drafting_narrative' },
+  ];
+
+  const getStageStatus = (stageKey: string) => {
+    if (!stage) return 'pending';
+    const stageOrder = ['analysing_pattern', 'compiling_evidence', 'drafting_narrative', 'complete'];
+    const currentIdx = stageOrder.indexOf(stage);
+    const targetIdx = stageOrder.indexOf(stageKey);
+    if (currentIdx > targetIdx) return 'complete';
+    if (currentIdx === targetIdx) return 'active';
+    return 'pending';
+  };
+
+  // Build display text from report or fallback
+  const narrativeText = report?.english_narrative ||
+    `FundLens detected a round-trip layering pattern involving seven accounts across three transaction hops. The pattern commenced when a dormant savings account (ACC-0041) was suddenly activated and dispersed funds totaling ₹47,23,000 to multiple intermediary accounts. These funds were subsequently consolidated through a central hub account (ACC-0089) exhibiting high-risk characteristics.\n\nThe consolidated amount was then distributed through additional intermediary layers before returning to the origin account (ACC-0041), completing a suspicious circular flow within 6 hours 14 minutes.`;
+
+  const hindiText = report?.hindi_narrative || '[मैन्युअल समीक्षा आवश्यक — AI अनुवाद अनुपलब्ध]';
+
+  const recommendedAction = report?.recommended_action ||
+    'Freeze implicated accounts pending investigation. Immediate escalation to law enforcement recommended given the high confidence score (94%) and rapid transaction velocity.';
+
+  const wordCount = report?.word_count || 847;
+  const pageCount = report?.page_estimate || 3;
+  const genTime = report?.generation_time_s ? `${report.generation_time_s.toFixed(0)} seconds` : '47 seconds';
+  const modelUsed = report?.model_used || 'Auto-generated';
 
   return (
     <div className="min-h-screen bg-white">
@@ -93,15 +132,15 @@ export default function STRGeneration() {
             </div>
           </div>
 
-          {/* Evidence Chain */}
+          {/* Evidence Chain — from blockchain API */}
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-5">
             <h3 className="text-sm text-gray-600 mb-4">Evidence Chain</h3>
             <div className="space-y-3">
-              {[
-                { block: '#48291', time: '14:23:07' },
-                { block: '#48292', time: '14:23:09' },
-                { block: '#48293', time: '14:23:12' },
-              ].map((item, idx) => (
+              {(chain?.blocks || [
+                { block_id: 48291, short_hash: '0xa1b2...f3e4', timestamp: '14:23:07', verified: true },
+                { block_id: 48292, short_hash: '0xc5d6...g7h8', timestamp: '14:23:09', verified: true },
+                { block_id: 48293, short_hash: '0xe9f0...i1j2', timestamp: '14:23:12', verified: true },
+              ]).map((block: any, idx: number) => (
                 <div
                   key={idx}
                   className="flex items-center gap-3 bg-white border border-gray-200 rounded-md p-3"
@@ -125,7 +164,9 @@ export default function STRGeneration() {
                     </svg>
                   </div>
                   <div className="flex-1 text-xs" style={{ fontFamily: 'DM Mono' }}>
-                    <div className="text-gray-900">Block {item.block} · Verified</div>
+                    <div className="text-gray-900">
+                      Block #{block.block_id} · {block.event_label || 'Verified'}
+                    </div>
                   </div>
                   <Check className="w-4 h-4 text-[#E31E24]" />
                 </div>
@@ -141,30 +182,44 @@ export default function STRGeneration() {
         <div className="w-1/2 p-8 overflow-auto flex flex-col">
           {/* Progress Stepper */}
           <div className="flex items-center gap-4 mb-8">
-            {[
-              { label: 'Analysing pattern', status: 'complete' },
-              { label: 'Compiling evidence', status: 'complete' },
-              { label: 'Drafting narrative', status: 'active' },
-            ].map((step, idx) => (
-              <div key={idx} className="flex items-center gap-2">
-                <div
-                  className={`w-6 h-6 rounded-full flex items-center justify-center ${
-                    step.status === 'complete'
-                      ? 'bg-[#E31E24]'
-                      : 'bg-white border-2 border-[#E31E24]'
-                  }`}
-                >
-                  {step.status === 'complete' ? (
-                    <Check className="w-4 h-4 text-white" />
-                  ) : (
-                    <div className="w-2 h-2 bg-[#E31E24] rounded-full animate-pulse" />
+            {stages.map((step, idx) => {
+              const status = getStageStatus(step.key);
+              return (
+                <div key={idx} className="flex items-center gap-2">
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                      status === 'complete'
+                        ? 'bg-[#E31E24]'
+                        : status === 'active'
+                        ? 'bg-white border-2 border-[#E31E24]'
+                        : 'bg-white border-2 border-gray-300'
+                    }`}
+                  >
+                    {status === 'complete' ? (
+                      <Check className="w-4 h-4 text-white" />
+                    ) : status === 'active' ? (
+                      <div className="w-2 h-2 bg-[#E31E24] rounded-full animate-pulse" />
+                    ) : (
+                      <div className="w-2 h-2 bg-gray-300 rounded-full" />
+                    )}
+                  </div>
+                  <span className={`text-xs ${status === 'pending' ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {step.label}
+                  </span>
+                  {idx < 2 && (
+                    <div className={`w-8 h-[2px] ${status === 'pending' ? 'bg-gray-300' : 'bg-[#E31E24]'}`} />
                   )}
                 </div>
-                <span className="text-xs text-gray-600">{step.label}</span>
-                {idx < 2 && <div className="w-8 h-[2px] bg-[#E31E24]" />}
-              </div>
-            ))}
+              );
+            })}
           </div>
+
+          {/* Error state */}
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+              {error}
+            </div>
+          )}
 
           {/* STR Report Preview */}
           <div className="flex-1 bg-gray-50 border border-[#E31E24] rounded-xl p-6">
@@ -175,7 +230,14 @@ export default function STRGeneration() {
                   STR-01 DRAFT
                 </div>
                 <div className="text-xs text-gray-600" style={{ fontFamily: 'DM Mono' }}>
-                  Auto-generated · 47 seconds
+                  {generating ? (
+                    <span className="flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      {message || 'Generating...'}
+                    </span>
+                  ) : (
+                    `${modelUsed} · ${genTime}`
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -208,7 +270,7 @@ export default function STRGeneration() {
 
             {/* Word Count / Page Count */}
             <div className="mb-4 text-xs text-gray-600" style={{ fontFamily: 'DM Mono' }}>
-              3 pages · 847 words
+              {pageCount} pages · {wordCount} words
             </div>
 
             {/* Report Content */}
@@ -240,20 +302,8 @@ export default function STRGeneration() {
 
               <div>
                 <div className="text-gray-900 font-bold mb-2">NARRATIVE:</div>
-                <div className="leading-relaxed opacity-90">
-                  FundLens detected a round-trip layering pattern involving seven accounts
-                  across three transaction hops. The pattern commenced when a dormant savings
-                  account (ACC-0041) was suddenly activated and dispersed funds totaling
-                  ₹47,23,000 to multiple intermediary accounts. These funds were subsequently
-                  consolidated through a central hub account (ACC-0089) exhibiting high-risk
-                  characteristics.
-                  <br />
-                  <br />
-                  The consolidated amount was then distributed through additional intermediary
-                  layers before returning to the origin account (ACC-0041), completing a
-                  suspicious circular flow within 6 hours 14 minutes. This velocity and
-                  structural pattern is consistent with FATF-identified layering typologies
-                  designed to obscure fund origins.
+                <div className="leading-relaxed opacity-90 whitespace-pre-line">
+                  {language === 'EN' ? narrativeText : hindiText}
                 </div>
               </div>
 
@@ -262,10 +312,7 @@ export default function STRGeneration() {
               <div>
                 <div className="text-gray-900 font-bold mb-2">RECOMMENDED ACTION:</div>
                 <div className="leading-relaxed opacity-90">
-                  Freeze implicated accounts pending investigation. Immediate escalation to
-                  law enforcement recommended given the high confidence score (94%) and rapid
-                  transaction velocity. Request enhanced due diligence on account holders and
-                  beneficial owners.
+                  {recommendedAction}
                 </div>
               </div>
             </div>

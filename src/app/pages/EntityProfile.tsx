@@ -1,10 +1,27 @@
-import { ArrowLeft, Plus, Flag, Eye } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { ArrowLeft, Plus, Flag, Eye, Loader2 } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router';
+import { useEntityProfile } from '../../hooks/useEntityProfile';
 
 export default function EntityProfile() {
   const navigate = useNavigate();
+  const { accountId } = useParams<{ accountId: string }>();
+  const { entity, loading, error } = useEntityProfile(accountId || 'ACC-0041');
 
-  const transactions = [
+  // Derive display values from API data or fallback
+  const ownerName = entity?.owner_name || 'Rajesh Kumar';
+  const initials = ownerName.split(' ').map((n: string) => n[0]).join('').toUpperCase();
+  const riskScore = entity?.risk_score || 87;
+  const accountType = entity?.account_type === 'savings' ? 'Savings Account' : 'Current Account';
+  const homeBranch = entity?.home_branch || 'SB-Branch Mumbai Central';
+
+  const transactions = entity?.transactions?.length ? entity.transactions.map((txn: any) => ({
+    date: txn.date,
+    time: txn.time,
+    counterparty: txn.counterparty,
+    amount: `₹${txn.amount.toLocaleString('en-IN')}`,
+    channel: txn.channel,
+    flagged: txn.flagged,
+  })) : [
     { date: '2026-03-19', time: '14:23', counterparty: 'ACC-0112', amount: '₹7,80,000', channel: 'NEFT', flagged: true },
     { date: '2026-03-19', time: '14:28', counterparty: 'ACC-0203', amount: '₹9,10,000', channel: 'UPI', flagged: true },
     { date: '2026-03-19', time: '15:12', counterparty: 'ACC-0317', amount: '₹6,45,000', channel: 'IMPS', flagged: true },
@@ -19,6 +36,41 @@ export default function EntityProfile() {
     { date: '2023-11-20', time: '16:30', counterparty: 'Utility Bill', amount: '₹1,180', channel: 'Bill Pay', flagged: false },
   ];
 
+  const avgVolume = entity?.metrics?.avg_monthly_volume
+    ? `₹${entity.metrics.avg_monthly_volume.toLocaleString('en-IN')}`
+    : '₹12,400';
+  const currentVolume = entity?.metrics?.current_month_volume
+    ? `₹${entity.metrics.current_month_volume.toLocaleString('en-IN')}`
+    : '₹47,23,000';
+  const deviation = entity?.metrics?.baseline_deviation || '3,800%';
+
+  const networkNodes = entity?.network?.length ? entity.network : [
+    { id: 'ACC-0112', risk_level: 'medium' },
+    { id: 'ACC-0203', risk_level: 'medium' },
+    { id: 'ACC-0089', risk_level: 'critical' },
+    { id: 'ACC-0317', risk_level: 'medium' },
+    { id: 'ACC-0455', risk_level: 'medium' },
+  ];
+
+  const relatedEntities = entity?.related_entities?.length ? entity.related_entities : [
+    { name: 'Priya Kumar', relation: 'Same address', risk_score: 42 },
+    { name: 'Amit Sharma', relation: 'Same mobile', risk_score: 68 },
+    { name: 'ACC-0892', relation: 'Shared device login', risk_score: 81 },
+  ];
+
+  const netNodePositions = [
+    { x: 30, y: 20 }, { x: 70, y: 20 }, { x: 85, y: 50 },
+    { x: 70, y: 80 }, { x: 30, y: 80 }, { x: 15, y: 50 },
+  ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#E31E24]" />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white pb-20">
       {/* Top Bar with Breadcrumb */}
@@ -30,7 +82,7 @@ export default function EntityProfile() {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="ml-4 text-sm text-gray-700" style={{ fontFamily: 'DM Mono' }}>
-          Dashboard → <span className="text-gray-900">CASE-2847</span> → <span className="text-[#E31E24]">ACC-0041</span>
+          Dashboard → <span className="text-gray-900">CASE-2847</span> → <span className="text-[#E31E24]">{accountId || 'ACC-0041'}</span>
         </div>
       </div>
 
@@ -41,28 +93,32 @@ export default function EntityProfile() {
           {/* Initials Circle */}
           <div className="w-[54px] h-[54px] rounded-full bg-[#E31E24] flex items-center justify-center">
             <span className="text-white font-bold text-xl" style={{ fontFamily: 'Syne' }}>
-              RK
+              {initials}
             </span>
           </div>
 
           {/* Identity Info */}
           <div>
             <h1 className="text-gray-900 text-[18px] font-bold mb-1" style={{ fontFamily: 'Syne' }}>
-              Rajesh Kumar
+              {ownerName}
             </h1>
             <div className="text-[13px] text-gray-700 mb-3">
-              Savings Account · SB-Branch Mumbai Central
+              {accountType} · {homeBranch}
             </div>
             <div className="flex items-center gap-2">
-              <span className="px-2 py-1 bg-[#F59E0B] text-white rounded text-xs font-semibold">
-                Dormant (26 months)
-              </span>
+              {entity?.is_dormant && (
+                <span className="px-2 py-1 bg-[#F59E0B] text-white rounded text-xs font-semibold">
+                  Dormant (26 months)
+                </span>
+              )}
               <span className="px-2 py-1 bg-[#3B82F6] text-white rounded text-xs font-semibold">
-                KYC Tier 2
+                KYC Tier {entity?.kyc_tier || 2}
               </span>
-              <span className="px-2 py-1 bg-[#E31E24] text-white rounded text-xs font-semibold">
-                PEP adjacent
-              </span>
+              {entity?.is_pep_adjacent && (
+                <span className="px-2 py-1 bg-[#E31E24] text-white rounded text-xs font-semibold">
+                  PEP adjacent
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -72,17 +128,17 @@ export default function EntityProfile() {
           <div className="text-xs text-gray-700 mb-1">Risk Score</div>
           <div className="flex items-center gap-3 mb-2">
             <span className="text-[#E31E24] text-4xl font-bold" style={{ fontFamily: 'Syne' }}>
-              87
+              {riskScore}
             </span>
             <span className="px-3 py-1 bg-[#E31E24] text-white rounded text-sm font-bold">
-              High
+              {entity?.risk_level === 'critical' ? 'Critical' : 'High'}
             </span>
           </div>
           <div className="text-[11px] text-[#E31E24] mb-1">
             Last active: 14:23 today (after 26mo dormancy)
           </div>
           <div className="text-[11px] text-gray-700">
-            Opened: March 2019 · PAN: XXXXX1234X (masked)
+            Opened: {entity?.created_date || 'March 2019'} · PAN: XXXXX1234X (masked)
           </div>
         </div>
       </div>
@@ -97,27 +153,29 @@ export default function EntityProfile() {
               <div className="bg-white border border-gray-200 rounded-lg p-4">
                 <div className="text-xs text-gray-700 mb-1">Avg monthly txn volume</div>
                 <div className="text-gray-900 text-lg font-bold" style={{ fontFamily: 'Syne' }}>
-                  ₹12,400
+                  {avgVolume}
                 </div>
               </div>
               <div className="bg-white border border-[#E31E24] rounded-lg p-4">
                 <div className="text-xs text-gray-700 mb-1">Current month</div>
                 <div className="text-[#E31E24] text-lg font-bold" style={{ fontFamily: 'Syne' }}>
-                  ₹47,23,000
+                  {currentVolume}
                 </div>
-                <div className="text-xs text-[#E31E24] mt-1">3,800% over baseline</div>
+                <div className="text-xs text-[#E31E24] mt-1">{deviation} over baseline</div>
               </div>
               <div className="bg-white border border-[#F59E0B] rounded-lg p-4">
                 <div className="text-xs text-gray-700 mb-1">Counterparties (30d)</div>
                 <div className="text-[#F59E0B] text-lg font-bold" style={{ fontFamily: 'Syne' }}>
-                  8
+                  {entity?.metrics?.counterparties_30d || 8}
                 </div>
                 <div className="text-xs text-[#F59E0B] mt-1">Unusual for type</div>
               </div>
               <div className="bg-white border border-[#E31E24] rounded-lg p-4">
                 <div className="text-xs text-gray-700 mb-1">In/Out ratio</div>
                 <div className="text-[#E31E24] text-lg font-bold" style={{ fontFamily: 'Syne' }}>
-                  97%/3%
+                  {entity?.metrics?.inbound_ratio
+                    ? `${Math.round(entity.metrics.inbound_ratio * 100)}%/${Math.round(entity.metrics.outbound_ratio * 100)}%`
+                    : '97%/3%'}
                 </div>
                 <div className="text-xs text-[#E31E24] mt-1">Nearly all inbound</div>
               </div>
@@ -186,7 +244,7 @@ export default function EntityProfile() {
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((txn, idx) => (
+                  {transactions.map((txn: any, idx: number) => (
                     <tr
                       key={idx}
                       className={`border-t border-gray-200 hover:bg-gray-50 transition-colors ${
@@ -220,7 +278,7 @@ export default function EntityProfile() {
               </table>
             </div>
             <div className="bg-gray-50 px-4 py-3 text-xs text-gray-700 border-t border-gray-200">
-              Showing 20 of 847 total transactions
+              Showing {transactions.length} of 847 total transactions
             </div>
           </div>
         </div>
@@ -241,37 +299,37 @@ export default function EntityProfile() {
                 {/* Center node (this account) */}
                 <circle cx="50%" cy="50%" r="18" fill="white" stroke="#E31E24" strokeWidth="2" />
                 <text x="50%" y="50%" textAnchor="middle" dy="0.35em" fill="#333" fontSize="9">
-                  ACC-0041
+                  {accountId || 'ACC-0041'}
                 </text>
                 
                 {/* Connected nodes */}
-                {[
-                  { x: 30, y: 20, label: '0112', color: '#F59E0B' },
-                  { x: 70, y: 20, label: '0203', color: '#F59E0B' },
-                  { x: 85, y: 50, label: '0089', color: '#E31E24' },
-                  { x: 70, y: 80, label: '0317', color: '#F59E0B' },
-                  { x: 30, y: 80, label: '0455', color: '#F59E0B' },
-                  { x: 15, y: 50, label: '0521', color: '#666' },
-                ].map((node, idx) => (
-                  <g key={idx}>
-                    <line
-                      x1="50%"
-                      y1="50%"
-                      x2={`${node.x}%`}
-                      y2={`${node.y}%`}
-                      stroke="#E31E24"
-                      strokeWidth="1"
-                      opacity="0.3"
-                      markerEnd="url(#mini-marker)"
-                    />
-                    <circle cx={`${node.x}%`} cy={`${node.y}%`} r="12" fill="white" stroke={node.color} strokeWidth="2" />
-                    <text x={`${node.x}%`} y={`${node.y}%`} textAnchor="middle" dy="0.35em" fill="#333" fontSize="8">
-                      {node.label}
-                    </text>
-                  </g>
-                ))}
+                {networkNodes.slice(0, 6).map((node: any, idx: number) => {
+                  const pos = netNodePositions[idx] || { x: 50, y: 50 };
+                  const color = node.risk_level === 'critical' ? '#E31E24' : node.risk_level === 'high' ? '#F59E0B' : '#666';
+                  return (
+                    <g key={idx}>
+                      <line
+                        x1="50%"
+                        y1="50%"
+                        x2={`${pos.x}%`}
+                        y2={`${pos.y}%`}
+                        stroke="#E31E24"
+                        strokeWidth="1"
+                        opacity="0.3"
+                        markerEnd="url(#mini-marker)"
+                      />
+                      <circle cx={`${pos.x}%`} cy={`${pos.y}%`} r="12" fill="white" stroke={color} strokeWidth="2" />
+                      <text x={`${pos.x}%`} y={`${pos.y}%`} textAnchor="middle" dy="0.35em" fill="#333" fontSize="8">
+                        {node.id.replace('ACC-', '')}
+                      </text>
+                    </g>
+                  );
+                })}
               </svg>
-              <button className="w-full mt-3 text-[#E31E24] hover:underline text-xs flex items-center justify-center gap-1">
+              <button
+                onClick={() => navigate('/graph')}
+                className="w-full mt-3 text-[#E31E24] hover:underline text-xs flex items-center justify-center gap-1"
+              >
                 <Eye className="w-3 h-3" />
                 View in full graph
               </button>
@@ -299,17 +357,15 @@ export default function EntityProfile() {
           <div>
             <h3 className="text-sm text-gray-700 mb-3">Related entities</h3>
             <div className="space-y-2">
-              {[
-                { name: 'Priya Kumar', relation: 'Same address', risk: 42, color: 'text-[#E31E24]' },
-                { name: 'Amit Sharma', relation: 'Same mobile', risk: 68, color: 'text-[#F59E0B]' },
-                { name: 'ACC-0892', relation: 'Shared device login', risk: 81, color: 'text-[#E31E24]' },
-              ].map((entity, idx) => (
+              {relatedEntities.map((entity: any, idx: number) => (
                 <div key={idx} className="bg-white border border-gray-200 rounded-lg p-3 flex items-center justify-between">
                   <div className="flex-1">
                     <div className="text-gray-900 text-xs font-medium">{entity.name}</div>
                     <div className="text-gray-700 text-[10px]">{entity.relation}</div>
                   </div>
-                  <div className={`text-sm font-bold ${entity.color}`}>{entity.risk}</div>
+                  <div className={`text-sm font-bold ${entity.risk_score >= 70 ? 'text-[#E31E24]' : 'text-[#F59E0B]'}`}>
+                    {entity.risk_score}
+                  </div>
                 </div>
               ))}
             </div>
