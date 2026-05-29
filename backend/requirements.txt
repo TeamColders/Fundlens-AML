@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+neo4j
+psycopg2-binary
+redis
+kafka-python
+requests
+httpx
