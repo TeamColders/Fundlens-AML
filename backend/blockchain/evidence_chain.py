@@ -1,17 +1,52 @@
 """
-FundLens — Blockchain Evidence Chain.
+backend/blockchain/evidence_chain.py
+=====================================
+FundLens — Blockchain Evidence Chain
 
-Append-only, cryptographically linked evidence ledger.
-DEMO MODE: SQLite-backed local chain (works on any laptop).
-PRODUCTION MODE: Hyperledger Fabric stubs (implement when Fabric network is live).
+Implements an append-only, cryptographically linked evidence chain
+that behaves identically to Hyperledger Fabric from the frontend's
+perspective.
 
-Usage:
+TWO MODES
+─────────
+DEMO       SQLite-backed local ledger. Works on any laptop.
+           No infrastructure. Fully cryptographic (SHA-256).
+           This is what you run for the hackathon demo.
+
+PRODUCTION Hyperledger Fabric via fabric-sdk-py.
+           Stubbed here — replace the _fabric_* helpers with
+           real chaincode calls when you have a Fabric network.
+
+AUTO-DETECTION
+──────────────
+Set the environment variable:
+    FUNDLENS_BLOCKCHAIN_MODE=demo        # force demo mode
+    FUNDLENS_BLOCKCHAIN_MODE=production  # force production mode
+If not set, DEMO mode is used (safe default).
+
+USAGE
+─────
     from backend.blockchain.evidence_chain import (
         init_db, write_block, get_chain, verify_chain,
         ALERT_CREATED, CASE_OPENED, SUBGRAPH_EXPORTED,
         LLM_NARRATIVE_GENERATED, SUPERVISOR_APPROVED, STR_SUBMITTED,
     )
+
+    init_db()   # call once at app startup
+
+    block = write_block(
+        case_id="CASE-2847",
+        event_type=ALERT_CREATED,
+        payload={"gnn_score": 0.94, "typology": "Round-trip Layering"},
+        actor_id="system",
+    )
+    print(block.block_id, block.block_hash)
+
+    chain = get_chain("CASE-2847")
+    result = verify_chain("CASE-2847")
+    print(result.valid, result.block_count)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +54,7 @@ import json
 import logging
 import os
 import sqlite3
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -30,7 +66,7 @@ _MODE = os.getenv("FUNDLENS_BLOCKCHAIN_MODE", "demo").lower()
 DEMO_MODE       = _MODE == "demo"
 PRODUCTION_MODE = _MODE == "production"
 
-# ── DB path ───────────────────────────────────────────────────────
+# ── DB path (overridable via env) ─────────────────────────────────
 DB_PATH = Path(os.getenv("FUNDLENS_EVIDENCE_DB", "fundlens_evidence.db"))
 
 # ── Event type constants ──────────────────────────────────────────
@@ -42,10 +78,15 @@ SUPERVISOR_APPROVED     = "SUPERVISOR_APPROVED"
 STR_SUBMITTED           = "STR_SUBMITTED"
 
 ALL_EVENT_TYPES = (
-    ALERT_CREATED, CASE_OPENED, SUBGRAPH_EXPORTED,
-    LLM_NARRATIVE_GENERATED, SUPERVISOR_APPROVED, STR_SUBMITTED,
+    ALERT_CREATED,
+    CASE_OPENED,
+    SUBGRAPH_EXPORTED,
+    LLM_NARRATIVE_GENERATED,
+    SUPERVISOR_APPROVED,
+    STR_SUBMITTED,
 )
 
+# Human-readable labels for the frontend audit trail
 EVENT_LABELS = {
     ALERT_CREATED:           "Initial alert created",
     CASE_OPENED:             "Investigator opened case",
@@ -60,19 +101,18 @@ EVENT_LABELS = {
 # DATA CLASSES
 # ════════════════════════════════════════════════════════════════
 
+@dataclass
 class BlockRecord:
     """A single immutable block in the evidence chain."""
-    def __init__(self, block_id, block_hash, prev_hash, case_id,
-                 event_type, payload_hash, timestamp, actor_id, metadata):
-        self.block_id     = block_id
-        self.block_hash   = block_hash
-        self.prev_hash    = prev_hash
-        self.case_id      = case_id
-        self.event_type   = event_type
-        self.payload_hash = payload_hash
-        self.timestamp    = timestamp
-        self.actor_id     = actor_id
-        self.metadata     = metadata
+    block_id:     int
+    block_hash:   str
+    prev_hash:    str
+    case_id:      str
+    event_type:   str
+    payload_hash: str
+    timestamp:    str
+    actor_id:     Optional[str]
+    metadata:     Optional[dict]
 
     @property
     def event_label(self) -> str:
@@ -80,6 +120,7 @@ class BlockRecord:
 
     @property
     def short_hash(self) -> str:
+        """Truncated hash for UI display: 0x3a8f...2c19"""
         return f"0x{self.block_hash[:4]}...{self.block_hash[-4:]}"
 
     @property
@@ -102,25 +143,26 @@ class BlockRecord:
             "timestamp":    self.timestamp,
             "actor_id":     self.actor_id,
             "metadata":     self.metadata,
-            "verified":     True,
+            "verified":     True,  # set to False by verify_chain if broken
         }
 
 
+@dataclass
 class ChainVerification:
     """Result of verify_chain()."""
-    def __init__(self, valid, block_count, blocks, broken_at_block=None):
-        self.valid           = valid
-        self.block_count     = block_count
-        self.blocks          = blocks
-        self.broken_at_block = broken_at_block
-        self.verified_at     = datetime.now(timezone.utc).isoformat()
-        self.network         = "UBI-Fabric-Private"
-        self.mode            = "DEMO" if DEMO_MODE else "PRODUCTION"
+    valid:           bool
+    block_count:     int
+    blocks:          list[BlockRecord]
+    broken_at_block: Optional[int]
+    verified_at:     str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    network:         str = "UBI-Fabric-Private"
+    mode:            str = "DEMO" if DEMO_MODE else "PRODUCTION"
 
     def to_dict(self) -> dict:
         blocks_list = []
         for b in self.blocks:
             d = b.to_dict()
+            # Mark the broken block if chain is invalid
             if not self.valid and b.block_id == self.broken_at_block:
                 d["verified"] = False
             blocks_list.append(d)
@@ -138,26 +180,57 @@ class ChainVerification:
 
 
 # ════════════════════════════════════════════════════════════════
-# CORE CRYPTO
+# CORE CRYPTO FUNCTIONS
 # ════════════════════════════════════════════════════════════════
 
 def compute_hash(payload: dict) -> str:
-    """SHA-256 of a deterministically serialised dict."""
+    """
+    Compute SHA-256 of a deterministically serialised dict.
+
+    Sorted keys ensure the same dict always produces the same hash
+    regardless of insertion order — critical for blockchain integrity.
+
+    Args:
+        payload: Any JSON-serialisable dict.
+
+    Returns:
+        64-character lowercase hex digest.
+    """
     serialised = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(serialised.encode("utf-8")).hexdigest()
 
 
-def _compute_block_hash(block_id, prev_hash, payload_hash, timestamp) -> str:
+def _compute_block_hash(
+    block_id:     int,
+    prev_hash:    str,
+    payload_hash: str,
+    timestamp:    str,
+) -> str:
+    """
+    Compute the block's own hash by combining its identity fields.
+
+    block_hash = SHA-256( block_id | prev_hash | payload_hash | timestamp )
+
+    This links every block to:
+      - Its position in the chain (block_id)
+      - The previous block (prev_hash)
+      - The evidence it seals (payload_hash)
+      - The exact moment it was created (timestamp)
+    """
     content = f"{block_id}|{prev_hash}|{payload_hash}|{timestamp}"
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 # ════════════════════════════════════════════════════════════════
-# DEMO MODE — SQLite
+# DEMO MODE — SQLite implementation
 # ════════════════════════════════════════════════════════════════
 
 def init_db(db_path: Path = DB_PATH) -> None:
-    """Create the blocks table (idempotent)."""
+    """
+    Create the blocks table if it does not exist.
+    Safe to call multiple times (idempotent).
+    Called once at FastAPI app startup via lifespan.
+    """
     con = sqlite3.connect(db_path)
     con.execute("""
         CREATE TABLE IF NOT EXISTS blocks (
@@ -172,56 +245,114 @@ def init_db(db_path: Path = DB_PATH) -> None:
             metadata      TEXT
         )
     """)
-    con.execute("CREATE INDEX IF NOT EXISTS idx_case_id ON blocks (case_id)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_event_type ON blocks (event_type)")
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_case_id ON blocks (case_id)"
+    )
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_event_type ON blocks (event_type)"
+    )
     con.commit()
     con.close()
     logger.info(f"Evidence chain DB ready: {db_path} (mode={_MODE.upper()})")
 
 
 def _get_prev_hash(case_id: str, db_path: Path = DB_PATH) -> str:
+    """
+    Return the hash of the most recent block for case_id.
+    Returns "GENESIS" if this is the first block for this case.
+    """
     con = sqlite3.connect(db_path)
     row = con.execute(
-        "SELECT block_hash FROM blocks WHERE case_id = ? ORDER BY block_id DESC LIMIT 1",
+        "SELECT block_hash FROM blocks WHERE case_id = ? "
+        "ORDER BY block_id DESC LIMIT 1",
         (case_id,),
     ).fetchone()
     con.close()
     return row[0] if row else "GENESIS"
 
 
-def _demo_write_block(case_id, event_type, payload, actor_id=None,
-                       metadata=None, db_path=DB_PATH) -> BlockRecord:
+def _demo_write_block(
+    case_id:    str,
+    event_type: str,
+    payload:    dict,
+    actor_id:   Optional[str] = None,
+    metadata:   Optional[dict] = None,
+    db_path:    Path = DB_PATH,
+) -> BlockRecord:
+    """
+    DEMO MODE: write an immutable block to SQLite.
+
+    Steps:
+      1. Compute payload_hash from the payload dict.
+      2. Get prev_hash from the last block for this case (or GENESIS).
+      3. Get the next block_id by inserting a placeholder then updating.
+         (SQLite's AUTOINCREMENT gives us the ID after insert.)
+      4. Compute block_hash = SHA-256(block_id|prev_hash|payload_hash|ts).
+      5. Update the row with the computed hash.
+      6. Return the full BlockRecord.
+    """
     ts           = datetime.now(timezone.utc).isoformat()
     payload_hash = compute_hash(payload)
     prev_hash    = _get_prev_hash(case_id, db_path)
     meta_json    = json.dumps(metadata) if metadata else None
 
     con = sqlite3.connect(db_path)
+
+    # Insert placeholder — we need block_id before computing block_hash
     cur = con.execute(
-        """INSERT INTO blocks
+        """
+        INSERT INTO blocks
                (block_hash, prev_hash, case_id, event_type,
                 payload_hash, timestamp, actor_id, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        ("PENDING", prev_hash, case_id, event_type,
-         payload_hash, ts, actor_id, meta_json),
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "PENDING",      # will be updated immediately below
+            prev_hash,
+            case_id,
+            event_type,
+            payload_hash,
+            ts,
+            actor_id,
+            meta_json,
+        ),
     )
     block_id = cur.lastrowid
+
+    # Now we know block_id — compute the real hash
     block_hash = _compute_block_hash(block_id, prev_hash, payload_hash, ts)
-    con.execute("UPDATE blocks SET block_hash = ? WHERE block_id = ?",
-                (block_hash, block_id))
+
+    # Update the placeholder
+    con.execute(
+        "UPDATE blocks SET block_hash = ? WHERE block_id = ?",
+        (block_hash, block_id),
+    )
     con.commit()
     con.close()
 
-    logger.info(f"Block #{block_id} written | case={case_id} | event={event_type} | hash={block_hash[:12]}...")
+    logger.info(
+        f"Block #{block_id} written | "
+        f"case={case_id} | event={event_type} | "
+        f"hash={block_hash[:12]}..."
+    )
 
     return BlockRecord(
-        block_id=block_id, block_hash=block_hash, prev_hash=prev_hash,
-        case_id=case_id, event_type=event_type, payload_hash=payload_hash,
-        timestamp=ts, actor_id=actor_id, metadata=metadata,
+        block_id=block_id,
+        block_hash=block_hash,
+        prev_hash=prev_hash,
+        case_id=case_id,
+        event_type=event_type,
+        payload_hash=payload_hash,
+        timestamp=ts,
+        actor_id=actor_id,
+        metadata=metadata,
     )
 
 
 def _demo_get_chain(case_id: str, db_path: Path = DB_PATH) -> list[BlockRecord]:
+    """
+    DEMO MODE: return all blocks for case_id in chronological order.
+    """
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     rows = con.execute(
@@ -233,33 +364,71 @@ def _demo_get_chain(case_id: str, db_path: Path = DB_PATH) -> list[BlockRecord]:
 
 
 def _demo_verify_chain(case_id: str, db_path: Path = DB_PATH) -> ChainVerification:
+    """
+    DEMO MODE: cryptographically verify the entire chain for case_id.
+
+    Checks:
+      1. Each block's block_hash matches the recomputed hash.
+      2. Each block's prev_hash equals the previous block's block_hash.
+      3. The first block's prev_hash is "GENESIS".
+
+    Returns ChainVerification with valid=True only if all checks pass.
+    """
     blocks = _demo_get_chain(case_id, db_path)
+
     if not blocks:
-        return ChainVerification(valid=False, block_count=0, blocks=[], broken_at_block=None)
+        return ChainVerification(
+            valid=False,
+            block_count=0,
+            blocks=[],
+            broken_at_block=None,
+        )
 
     broken_at = None
+
     for i, block in enumerate(blocks):
+        # Recompute the expected block hash
         expected = _compute_block_hash(
-            block.block_id, block.prev_hash, block.payload_hash, block.timestamp)
+            block.block_id,
+            block.prev_hash,
+            block.payload_hash,
+            block.timestamp,
+        )
+
+        # Check 1: block hash integrity
         if expected != block.block_hash:
             broken_at = block.block_id
+            logger.error(
+                f"Chain broken at block #{block.block_id} — "
+                f"hash mismatch for case {case_id}"
+            )
             break
+
+        # Check 2: prev_hash linkage
         if i == 0:
             if block.prev_hash != "GENESIS":
                 broken_at = block.block_id
+                logger.error(f"Block #1 prev_hash is not GENESIS for case {case_id}")
                 break
         else:
             if block.prev_hash != blocks[i - 1].block_hash:
                 broken_at = block.block_id
+                logger.error(
+                    f"Chain broken at block #{block.block_id} — "
+                    f"prev_hash mismatch for case {case_id}"
+                )
                 break
 
     return ChainVerification(
-        valid=broken_at is None, block_count=len(blocks),
-        blocks=blocks, broken_at_block=broken_at,
+        valid=broken_at is None,
+        block_count=len(blocks),
+        blocks=blocks,
+        broken_at_block=broken_at,
     )
 
 
-def _row_to_block(row) -> BlockRecord:
+def _row_to_block(row: sqlite3.Row) -> BlockRecord:
+    """Convert a SQLite row to a BlockRecord dataclass."""
     metadata = None
     if row["metadata"]:
         try:
@@ -267,10 +436,14 @@ def _row_to_block(row) -> BlockRecord:
         except (json.JSONDecodeError, TypeError):
             pass
     return BlockRecord(
-        block_id=row["block_id"], block_hash=row["block_hash"],
-        prev_hash=row["prev_hash"], case_id=row["case_id"],
-        event_type=row["event_type"], payload_hash=row["payload_hash"],
-        timestamp=row["timestamp"], actor_id=row["actor_id"],
+        block_id=row["block_id"],
+        block_hash=row["block_hash"],
+        prev_hash=row["prev_hash"],
+        case_id=row["case_id"],
+        event_type=row["event_type"],
+        payload_hash=row["payload_hash"],
+        timestamp=row["timestamp"],
+        actor_id=row["actor_id"],
         metadata=metadata,
     )
 
@@ -278,61 +451,164 @@ def _row_to_block(row) -> BlockRecord:
 # ════════════════════════════════════════════════════════════════
 # PRODUCTION MODE — Hyperledger Fabric stubs
 # ════════════════════════════════════════════════════════════════
+#
+# Replace these stubs with real fabric-sdk-py calls when you have
+# a Hyperledger Fabric network running.
+#
+# Chaincode interface expected:
+#   invoke WriteBlock(case_id, event_type, payload_hash, prev_hash,
+#                     block_hash, timestamp, actor_id, metadata_json)
+#   query  GetChain(case_id) -> []Block
+#   query  VerifyChain(case_id) -> VerificationResult
 
-def _fabric_write_block(case_id, event_type, payload, actor_id=None, metadata=None):
-    raise NotImplementedError("Hyperledger Fabric not configured. Use FUNDLENS_BLOCKCHAIN_MODE=demo")
+def _fabric_write_block(
+    case_id:    str,
+    event_type: str,
+    payload:    dict,
+    actor_id:   Optional[str] = None,
+    metadata:   Optional[dict] = None,
+) -> BlockRecord:
+    """
+    PRODUCTION MODE stub.
+    Replace with fabric-sdk-py Gateway.submit_transaction() call.
+    """
+    raise NotImplementedError(
+        "Hyperledger Fabric integration not yet configured. "
+        "Set FUNDLENS_BLOCKCHAIN_MODE=demo to use the SQLite ledger."
+    )
 
-def _fabric_get_chain(case_id):
-    raise NotImplementedError("Hyperledger Fabric not configured.")
 
-def _fabric_verify_chain(case_id):
-    raise NotImplementedError("Hyperledger Fabric not configured.")
+def _fabric_get_chain(case_id: str) -> list[BlockRecord]:
+    """PRODUCTION MODE stub."""
+    raise NotImplementedError(
+        "Hyperledger Fabric integration not yet configured."
+    )
+
+
+def _fabric_verify_chain(case_id: str) -> ChainVerification:
+    """PRODUCTION MODE stub."""
+    raise NotImplementedError(
+        "Hyperledger Fabric integration not yet configured."
+    )
 
 
 # ════════════════════════════════════════════════════════════════
 # PUBLIC API — mode-dispatched
 # ════════════════════════════════════════════════════════════════
 
-def write_block(case_id, event_type, payload, actor_id=None,
-                metadata=None, db_path=DB_PATH) -> BlockRecord:
-    """Append an immutable block to the evidence chain."""
+def write_block(
+    case_id:    str,
+    event_type: str,
+    payload:    dict,
+    actor_id:   Optional[str] = None,
+    metadata:   Optional[dict] = None,
+    db_path:    Path = DB_PATH,
+) -> BlockRecord:
+    """
+    Append an immutable block to the evidence chain for case_id.
+
+    Args:
+        case_id:    The case this block belongs to (e.g. "CASE-2847").
+        event_type: One of the EVENT_TYPE constants (e.g. ALERT_CREATED).
+        payload:    Dict of evidence data. Its SHA-256 hash is stored.
+        actor_id:   Who triggered this event (e.g. "system", "RK-001").
+        metadata:   Optional extra fields stored alongside the block.
+        db_path:    Override the SQLite DB path (useful for tests).
+
+    Returns:
+        A BlockRecord with all fields populated, including the computed
+        block_hash and the block_id assigned by the chain.
+
+    Raises:
+        ValueError: if event_type is not a recognised constant.
+    """
     if event_type not in ALL_EVENT_TYPES:
-        raise ValueError(f"Unknown event_type '{event_type}'. Must be one of: {', '.join(ALL_EVENT_TYPES)}")
+        raise ValueError(
+            f"Unknown event_type '{event_type}'. "
+            f"Must be one of: {', '.join(ALL_EVENT_TYPES)}"
+        )
+
     if PRODUCTION_MODE:
         return _fabric_write_block(case_id, event_type, payload, actor_id, metadata)
     return _demo_write_block(case_id, event_type, payload, actor_id, metadata, db_path)
 
 
 def get_chain(case_id: str, db_path: Path = DB_PATH) -> list[BlockRecord]:
-    """Return all blocks for case_id in chronological order."""
+    """
+    Return all blocks for case_id in chronological order.
+
+    Returns an empty list if no blocks exist for this case.
+    Each BlockRecord includes a .to_dict() method for JSON serialisation.
+    """
     if PRODUCTION_MODE:
         return _fabric_get_chain(case_id)
     return _demo_get_chain(case_id, db_path)
 
 
 def verify_chain(case_id: str, db_path: Path = DB_PATH) -> ChainVerification:
-    """Cryptographically verify the entire chain for case_id."""
+    """
+    Cryptographically verify the entire evidence chain for case_id.
+
+    Recomputes every block hash and checks prev_hash linkage.
+    Returns ChainVerification with .valid=True only if all checks pass.
+
+    The returned object's .to_dict() method is safe to return directly
+    from a FastAPI route as JSON.
+    """
     if PRODUCTION_MODE:
         return _fabric_verify_chain(case_id)
     return _demo_verify_chain(case_id, db_path)
 
 
 def get_all_cases(db_path: Path = DB_PATH) -> list[str]:
-    """Return all case_ids with at least one block."""
+    """Return a list of all case_ids that have at least one block."""
     if PRODUCTION_MODE:
         return []
     con = sqlite3.connect(db_path)
-    rows = con.execute("SELECT DISTINCT case_id FROM blocks ORDER BY case_id").fetchall()
+    rows = con.execute(
+        "SELECT DISTINCT case_id FROM blocks ORDER BY case_id"
+    ).fetchall()
     con.close()
     return [r[0] for r in rows]
 
 
-def seal_case(case_id, gnn_score, typology, total_amount, accounts_count,
-              actor_id="system", db_path=DB_PATH) -> BlockRecord:
-    """Write Block 1 (ALERT_CREATED) for a new case."""
+def get_block_count(case_id: str, db_path: Path = DB_PATH) -> int:
+    """Return the number of blocks for a case."""
+    if PRODUCTION_MODE:
+        return 0
+    con = sqlite3.connect(db_path)
+    count = con.execute(
+        "SELECT COUNT(*) FROM blocks WHERE case_id = ?",
+        (case_id,),
+    ).fetchone()[0]
+    con.close()
+    return count
+
+
+def seal_case(
+    case_id:         str,
+    gnn_score:       float,
+    typology:        str,
+    total_amount:    float,
+    accounts_count:  int,
+    actor_id:        str = "system",
+    db_path:         Path = DB_PATH,
+) -> BlockRecord:
+    """
+    Convenience function: write Block 1 (ALERT_CREATED) for a new case.
+    Called by the alert pipeline when a new fraud case is opened.
+    """
     return write_block(
-        case_id=case_id, event_type=ALERT_CREATED,
-        payload={"case_id": case_id, "gnn_score": gnn_score, "typology": typology,
-                 "total_amount": total_amount, "accounts_count": accounts_count},
-        actor_id=actor_id, metadata={"source": "FundLens GNN Pipeline"}, db_path=db_path,
+        case_id=case_id,
+        event_type=ALERT_CREATED,
+        payload={
+            "case_id":        case_id,
+            "gnn_score":      gnn_score,
+            "typology":       typology,
+            "total_amount":   total_amount,
+            "accounts_count": accounts_count,
+        },
+        actor_id=actor_id,
+        metadata={"source": "FundLens GNN Pipeline"},
+        db_path=db_path,
     )

@@ -3,21 +3,22 @@
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
-python-dotenv>=1.0.0
+python-dotenv
 
 # LLM
-anthropic>=0.39.0
+google-genai>=0.1.0
 
 # Database
-# neo4j>=5.14.0        # Uncomment when using Neo4j
-# psycopg2-binary>=2.9 # Uncomment when using PostgreSQL
-# sqlalchemy>=2.0      # Uncomment when using SQLAlchemy
-# alembic>=1.12        # Uncomment for migrations
+neo4j>=5.14.0
+psycopg2-binary>=2.9
+sqlalchemy>=2.0
+alembic>=1.12
 
-# ML (uncomment when implementing GNN)
-# torch>=2.1
-# torch-geometric>=2.4
-# scikit-learn>=1.3
+# ML
+torch>=2.1
+torch-geometric>=2.4
+scikit-learn>=1.3
+matplotlib>=3.8
 
 # Data
 pandas>=2.1.0
@@ -25,8 +26,7 @@ numpy>=1.26.0
 networkx>=3.2
 
 # Streaming
-# kafka-python>=2.0    # Uncomment when using Kafka
-# apache-flink>=1.18   # Uncomment when using Flink
+confluent-kafka>=2.3.0
 
 # Testing
 pytest>=7.4.0

@@ -28,3 +28,23 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/
+
+# Local Debug Scripts
+debug_*.py
+test_*.py
+
+# Generated Data & Reports
+training_curves.png
+training_report.json
+fundlens_evidence.db
+FundLens_EvidenceChain/
+FundLens_Graph_Complete/
+
+# Machine Learning Models
+*.pt
+*.pth
+*.onnx
+models/
+
+# Logs
+*.log

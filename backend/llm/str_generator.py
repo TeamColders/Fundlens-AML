@@ -1,5 +1,5 @@
 """
-FundLens — STR report generation using Anthropic Claude API.
+FundLens — STR report generation using Gemini API.
 Falls back to a template-based STR if the API is unavailable.
 """
 import asyncio
@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-import anthropic
+from google import genai
 
 from backend.llm.prompts import (
     build_str_prompt,
@@ -19,13 +19,13 @@ from backend.api.models import STRReport
 
 logger = logging.getLogger(__name__)
 
-# ── Anthropic client — initialised lazily ────────────────────────
-_client: Optional[anthropic.AsyncAnthropic] = None
+# ── Gemini client — initialised lazily ────────────────────────
+_client = None
 
-def get_client() -> anthropic.AsyncAnthropic:
+def get_client() -> genai.Client:
     global _client
     if _client is None:
-        _client = anthropic.AsyncAnthropic()  # reads ANTHROPIC_API_KEY from env
+        _client = genai.Client()  # reads GEMINI_API_KEY from env
     return _client
 
 
@@ -37,19 +37,19 @@ async def generate_str(case_data: dict) -> STRReport:
     Retries once on API failure, then falls back to a template STR.
     """
     start = time.time()
-    model_used = "claude-opus-4-5"
+    model_used = "gemini-2.5-flash"
 
     try:
         english_report, narrative_only = await _generate_english_str(case_data, model_used)
         hindi_narrative = await _translate_to_hindi(narrative_only, model_used)
-    except anthropic.APIError as e:
-        logger.warning(f"Anthropic API error on first attempt: {e}. Retrying in 2s...")
+    except Exception as e:
+        logger.warning(f"Gemini API error on first attempt: {e}. Retrying in 2s...")
         await asyncio.sleep(2)
         try:
             english_report, narrative_only = await _generate_english_str(case_data, model_used)
             hindi_narrative = await _translate_to_hindi(narrative_only, model_used)
-        except anthropic.APIError as e2:
-            logger.error(f"Anthropic API failed after retry: {e2}. Using fallback STR.")
+        except Exception as e2:
+            logger.error(f"Gemini API failed after retry: {e2}. Using fallback STR.")
             return _fallback_str(case_data, start)
 
     elapsed = time.time() - start
@@ -76,18 +76,20 @@ async def generate_str(case_data: dict) -> STRReport:
 
 
 async def _generate_english_str(case_data: dict, model: str) -> tuple[str, str]:
-    """Call Claude to generate the full English STR. Returns (full_text, narrative_only)."""
+    """Call Gemini to generate the full English STR. Returns (full_text, narrative_only)."""
     system_prompt, user_prompt = build_str_prompt(case_data)
     client = get_client()
 
-    message = await client.messages.create(
+    response = await client.aio.models.generate_content(
         model=model,
-        max_tokens=2000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+        contents=user_prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            max_output_tokens=2000,
+        )
     )
 
-    full_text = message.content[0].text
+    full_text = response.text
     narrative_only = _extract_section(full_text, "NARRATIVE:")
     logger.info(f"STR generated for {case_data.get('case_id')} — {len(full_text.split())} words")
     return full_text, narrative_only
@@ -98,13 +100,15 @@ async def _translate_to_hindi(english_narrative: str, model: str) -> str:
     system_prompt, user_prompt = build_hindi_translation_prompt(english_narrative)
     client = get_client()
 
-    message = await client.messages.create(
+    response = await client.aio.models.generate_content(
         model=model,
-        max_tokens=1500,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+        contents=user_prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            max_output_tokens=1500,
+        )
     )
-    return message.content[0].text
+    return response.text
 
 
 def _extract_section(text: str, header: str) -> str:
@@ -184,14 +188,16 @@ async def nl_to_cypher(query: str) -> str:
     system_prompt, user_prompt = build_cypher_prompt(query, DEFAULT_GRAPH_SCHEMA)
     client = get_client()
 
-    message = await client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=300,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+    response = await client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=user_prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            max_output_tokens=300,
+        )
     )
 
-    cypher = message.content[0].text.strip()
+    cypher = response.text.strip()
 
     # Safety check — reject any write operations
     write_ops = ["CREATE", "MERGE", "SET ", "DELETE", "REMOVE", "DROP"]

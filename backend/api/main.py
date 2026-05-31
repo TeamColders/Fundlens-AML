@@ -120,7 +120,7 @@ async def health():
         "services": {
             "api":        "ok",
             "blockchain": "ok",
-            "llm":        "ok" if os.getenv("ANTHROPIC_API_KEY") else "no_key",
+            "llm":        "ok" if os.getenv("GEMINI_API_KEY") else "no_key",
             "neo4j":      "demo_mode",
             "postgres":   "demo_mode",
         },
