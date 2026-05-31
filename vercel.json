@@ -20,15 +20,6 @@
       "dest": "/$1"
     }
   ],
-  "env": {
-    "NEO4J_URI": "@neo4j_uri",
-    "NEO4J_USER": "@neo4j_user",
-    "NEO4J_PASSWORD": "@neo4j_password",
-    "POSTGRES_DSN": "@postgres_dsn",
-    "REDIS_URL": "@redis_url",
-    "KAFKA_BOOTSTRAP": "@kafka_bootstrap",
-    "GNN_SCORE_URL": "@gnn_score_url"
-  },
   "build": {
     "env": {
       "PYTHON_VERSION": "3.11",
