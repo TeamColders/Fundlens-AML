@@ -32,8 +32,8 @@ export default function GraphNode({
   const colorMap = {
     amber: '#F59E0B',
     red: '#E31E24',
-    teal: '#E31E24',
-    'teal-dashed': '#E31E24',
+    teal: '#00C9A7',
+    'teal-dashed': '#00C9A7',
   };
 
   const strokeColor = colorMap[color];
@@ -75,7 +75,7 @@ export default function GraphNode({
           opacity="0"
           className="animate-pulse"
           style={{
-            filter: color === 'red' ? 'url(#red-glow)' : 'url(#amber-glow)',
+            filter: color === 'red' ? 'url(#red-glow-g), url(#red-glow)' : 'url(#amber-glow-g), url(#amber-glow)',
             animation: 'pulse-glow 2s ease-in-out infinite',
           }}
         />
@@ -99,7 +99,7 @@ export default function GraphNode({
         x={svgX}
         y={svgY}
         textAnchor="middle"
-        dy={sublabel || amount ? "-0.3em" : "0.35em"}
+        dy={sublabel ? "-0.3em" : "0.35em"}
         fill="#1a1a1a"
         fontSize="10"
         fontFamily="DM Mono"
@@ -109,8 +109,8 @@ export default function GraphNode({
         {label}
       </text>
 
-      {/* Sublabel or amount */}
-      {(sublabel || amount) && (
+      {/* Sublabel only */}
+      {sublabel && (
         <text
           x={svgX}
           y={svgY}
@@ -122,7 +122,7 @@ export default function GraphNode({
           fontWeight="600"
           className="pointer-events-none select-none"
         >
-          {sublabel || amount}
+          {sublabel}
         </text>
       )}
 

@@ -1,160 +1,41 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { AlertTriangle, TrendingUp, Clock, ExternalLink, ChevronRight, Loader2 } from 'lucide-react';
 import GraphNode from '../components/GraphNode';
 import FlowArrow from '../components/FlowArrow';
 import NodeTooltip from '../components/NodeTooltip';
 import { useAlerts, useAlertDetail } from '../../hooks/useAlerts';
+import { subgraphToLayout, formatAmount } from '../../lib/subgraphLayout';
 
-interface NodeData {
-  id: string;
-  x: number;
-  y: number;
-  radius: number;
-  label: string;
-  sublabel?: string;
-  amount?: string;
-  timestamp?: string;
-  color: 'amber' | 'red' | 'teal' | 'teal-dashed';
-  glow?: boolean;
-  critical?: boolean;
-}
-
-interface ArrowData {
-  id: string;
-  from: { x: number; y: number };
-  to: { x: number; y: number };
-  amount: string;
-  color?: 'teal' | 'red';
-  curved?: boolean;
-}
-
-// Format amount for display: 4723000 → "₹47.2L"
-function formatAmount(amount: number): string {
-  if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
-  if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-  if (amount >= 1000) return `₹${(amount / 1000).toFixed(1)}K`;
-  return `₹${amount}`;
-}
-
-// Map risk_level to priority label
 function riskToPriority(risk: string): string {
   if (risk === 'critical') return 'critical';
-  if (risk === 'high' || risk === 'critical') return 'high';
+  if (risk === 'high') return 'high';
   return 'medium';
-}
-
-// Convert API subgraph to SVG node positions for the visualization
-function subgraphToNodes(detail: any): { nodes: NodeData[]; arrows: ArrowData[] } {
-  if (!detail?.subgraph?.nodes?.length) {
-    return { nodes: [], arrows: [] };
-  }
-
-  const apiNodes = detail.subgraph.nodes;
-  const apiEdges = detail.subgraph.edges;
-
-  // Compute layout positions based on node roles
-  const originNode = apiNodes.find((n: any) => n.is_origin);
-  const hubNode = apiNodes.find((n: any) => n.is_hub);
-  const others = apiNodes.filter((n: any) => !n.is_origin && !n.is_hub);
-
-  const svgNodes: NodeData[] = [];
-
-  // Place origin at left
-  if (originNode) {
-    svgNodes.push({
-      id: originNode.id,
-      x: 15, y: 50, radius: 28,
-      label: originNode.id,
-      sublabel: originNode.is_dormant ? 'Dormant→Active' : undefined,
-      color: 'amber', glow: true,
-    });
-  }
-
-  // Place intermediaries in a grid
-  const leftIntermediaries = others.filter((_, i: number) => i < Math.ceil(others.length / 2));
-  const rightIntermediaries = others.filter((_, i: number) => i >= Math.ceil(others.length / 2));
-
-  leftIntermediaries.forEach((node: any, i: number) => {
-    const yPos = 35 + (i * 30 / Math.max(leftIntermediaries.length - 1, 1));
-    svgNodes.push({
-      id: node.id,
-      x: 32, y: leftIntermediaries.length === 1 ? 35 : yPos,
-      radius: 18,
-      label: node.id,
-      amount: formatAmount(node.amount),
-      color: 'amber',
-    });
-  });
-
-  // Place hub at center
-  if (hubNode) {
-    svgNodes.push({
-      id: hubNode.id,
-      x: 50, y: 50, radius: 26,
-      label: hubNode.id,
-      amount: `Hub ${formatAmount(hubNode.amount)}`,
-      color: 'red', glow: true, critical: true,
-    });
-  }
-
-  rightIntermediaries.forEach((node: any, i: number) => {
-    const yPos = 35 + (i * 30 / Math.max(rightIntermediaries.length - 1, 1));
-    svgNodes.push({
-      id: node.id,
-      x: 68, y: rightIntermediaries.length === 1 ? 35 : yPos,
-      radius: 18,
-      label: node.id,
-      amount: formatAmount(node.amount),
-      color: 'amber',
-    });
-  });
-
-  // Return node at right (for round-trip patterns)
-  if (originNode && detail.typology?.includes('Round-trip')) {
-    svgNodes.push({
-      id: `${originNode.id}-return`,
-      x: 85, y: 50, radius: 24,
-      label: originNode.id,
-      sublabel: 'Origin ← Return',
-      color: 'teal-dashed',
-    });
-  }
-
-  // Build arrows from edges
-  const nodeMap: Record<string, NodeData> = {};
-  svgNodes.forEach(n => { nodeMap[n.id] = n; });
-
-  const svgArrows: ArrowData[] = [];
-  apiEdges.forEach((edge: any, i: number) => {
-    const fromNode = nodeMap[edge.source];
-    const toNode = nodeMap[edge.target];
-    if (fromNode && toNode) {
-      svgArrows.push({
-        id: `edge-${i}`,
-        from: { x: fromNode.x, y: fromNode.y },
-        to: { x: toNode.x, y: toNode.y },
-        amount: formatAmount(edge.amount),
-      });
-    }
-  });
-
-  return { nodes: svgNodes, arrows: svgArrows };
 }
 
 export default function InvestigationDashboard() {
   const navigate = useNavigate();
-  const [selectedAlert, setSelectedAlert] = useState<string>('CASE-2847');
+  const [selectedAlert, setSelectedAlert] = useState<string>('');
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
 
   // Fetch alerts from API
   const { alerts, loading: alertsLoading } = useAlerts();
+  // Select the first alert automatically once alerts are loaded
+  useEffect(() => {
+    if (!selectedAlert && alerts.length > 0) {
+      setSelectedAlert(alerts[0].case_id);
+    }
+  }, [alerts, selectedAlert]);
+
   // Fetch selected alert detail for subgraph
   const { detail } = useAlertDetail(selectedAlert);
 
   // Convert API data to SVG visualization
-  const { nodes, arrows } = useMemo(() => subgraphToNodes(detail), [detail]);
+  const { nodes, arrows } = useMemo(
+    () => subgraphToLayout(detail?.subgraph, detail?.typology, 'dashboard'),
+    [detail],
+  );
 
   // Get the currently selected case data
   const selectedCase = useMemo(() => {
@@ -285,7 +166,7 @@ export default function InvestigationDashboard() {
             <div className="text-xs text-gray-600" style={{ fontFamily: 'DM Mono' }}>
               <div className="flex justify-between mb-1">
                 <span>Alerts today:</span>
-                <span className="text-gray-900">47</span>
+                <span className="text-gray-900">{alerts.length}</span>
               </div>
               <div className="flex justify-between">
                 <span>Under review:</span>
@@ -411,14 +292,27 @@ export default function InvestigationDashboard() {
             </div>
           </div>
 
-          {/* Expand button */}
-          <button
-            onClick={() => navigate('/graph')}
-            className="absolute top-6 right-6 px-3 py-2 bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors rounded text-xs flex items-center gap-2"
-          >
-            <ExternalLink className="w-3 h-3" />
-            Expand view
-          </button>
+          <div className="absolute top-4 right-4 flex flex-col gap-2 items-end">
+            <button
+              type="button"
+              disabled={!selectedAlert}
+              onClick={() =>
+                navigate(`/graph?case=${encodeURIComponent(selectedAlert)}`)
+              }
+              className="px-3 py-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors rounded-lg text-xs flex items-center gap-2 shadow-sm"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Expand graph
+            </button>
+            <button
+              type="button"
+              disabled={!selectedAlert}
+              onClick={() => navigate(`/entity/${detail?.subgraph?.nodes?.find((n) => n.is_origin)?.id || detail?.subgraph?.nodes?.[0]?.id || ''}`)}
+              className="px-3 py-2 bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors rounded-lg text-xs shadow-sm"
+            >
+              Origin profile
+            </button>
+          </div>
         </div>
 
         {/* RIGHT COLUMN: Case Details */}

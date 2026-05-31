@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-# Load .env before anything else
 load_dotenv()
 
 logging.basicConfig(
@@ -21,23 +20,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ── WebSocket connection manager ─────────────────────────────────
 class ConnectionManager:
     def __init__(self):
-        self.active: list[WebSocket] = []
+        self.active: list = []
 
     async def connect(self, ws: WebSocket):
         await ws.accept()
         self.active.append(ws)
-        logger.info(f"WS client connected — total: {len(self.active)}")
 
     def disconnect(self, ws: WebSocket):
         if ws in self.active:
             self.active.remove(ws)
-        logger.info(f"WS client disconnected — total: {len(self.active)}")
 
     async def broadcast(self, message: dict):
         import json
+
         dead = []
         for ws in self.active:
             try:
@@ -45,29 +42,42 @@ class ConnectionManager:
             except Exception:
                 dead.append(ws)
         for ws in dead:
-            if ws in self.active:
-                self.active.remove(ws)
+            self.disconnect(ws)
 
 
 manager = ConnectionManager()
 
 
-# ── Lifespan: startup + shutdown ─────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("FundLens API starting up...")
-
-    # Initialise blockchain SQLite DB
     from backend.blockchain.evidence_chain import init_db
-    init_db()
-    logger.info("Evidence chain DB ready")
 
-    logger.info("FundLens API ready — listening on port 8000")
+    init_db()
+
+    try:
+        from backend.graph.neo4j_client import get_client
+
+        if get_client().verify_connection():
+            logger.info("Neo4j connection verified")
+        else:
+            logger.warning("Neo4j unavailable — using Postgres/SQLite demo data")
+    except Exception as exc:
+        logger.warning("Neo4j check skipped: %s", exc)
+
+    try:
+        from backend.database.postgres_client import init_db as init_pg
+
+        init_pg()
+        logger.info("PostgreSQL schema ready")
+    except Exception as exc:
+        logger.warning("PostgreSQL init skipped: %s", exc)
+
+    logger.info("FundLens API ready")
     yield
     logger.info("FundLens API shutting down")
 
 
-# ── App ───────────────────────────────────────────────────────────
 app = FastAPI(
     title="FundLens AML API",
     description="Intelligent Fund Flow Intelligence Platform — Union Bank of India",
@@ -75,7 +85,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow the Vite dev server and common origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -89,16 +98,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ── Mount all routers ────────────────────────────────────────────
 from backend.api.routes.alerts import router as alerts_router
-from backend.api.routes.cases import router as cases_router
-from backend.api.routes.graph import router as graph_router
-from backend.api.routes.entities import router as entities_router
-from backend.api.routes.str_report import router as str_router
 from backend.api.routes.analytics import router as analytics_router
 from backend.api.routes.blockchain import router as blockchain_router
+from backend.api.routes.cases import router as cases_router
+from backend.api.routes.entities import router as entities_router
+from backend.api.routes.graph import router as graph_router
 from backend.api.routes.query import router as query_router
+from backend.api.routes.str_report import router as str_router
 
 app.include_router(alerts_router)
 app.include_router(cases_router)
@@ -110,30 +117,42 @@ app.include_router(blockchain_router)
 app.include_router(query_router)
 
 
-# ── Health check ─────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
+    postgres_ok = False
+    sqlite_ok = False
+    try:
+        from backend.database.demo_data import DEMO_DB_PATH, _load_all_cases
+
+        postgres_ok = len(_load_all_cases()) > 0
+    except Exception:
+        pass
+    sqlite_ok = DEMO_DB_PATH.exists()
+
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "version": "1.0.0",
         "services": {
-            "api":        "ok",
+            "api": "ok",
             "blockchain": "ok",
-            "llm":        "ok" if os.getenv("GEMINI_API_KEY") else "no_key",
-            "neo4j":      "demo_mode",
-            "postgres":   "demo_mode",
+            "postgres": "ok" if postgres_ok else "fallback",
+            "sqlite_demo": "ok" if sqlite_ok else "missing",
+            "llm": "ok" if os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") else "no_key",
         },
         "endpoints": [
-            "/api/alerts", "/api/cases", "/api/graph/{case_id}",
-            "/api/entities/{account_id}", "/api/str/{case_id}/generate",
-            "/api/analytics", "/api/blockchain/{case_id}",
+            "/api/alerts",
+            "/api/cases",
+            "/api/graph/{case_id}",
+            "/api/entities/{account_id}",
+            "/api/str/{case_id}/generate",
+            "/api/analytics",
+            "/api/blockchain/{case_id}",
             "/api/query",
         ],
     }
 
 
-# ── WebSocket — real-time alert feed ─────────────────────────────
 @app.websocket("/ws/alerts")
 async def websocket_alerts(websocket: WebSocket):
     await manager.connect(websocket)
@@ -144,11 +163,18 @@ async def websocket_alerts(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
-# ── Expose broadcast so other modules can push alerts ────────────
 def broadcast_alert(alert: dict):
     import asyncio
+
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(manager.broadcast({"type": "new_alert", "data": alert}))
     except RuntimeError:
         pass
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.getenv("API_PORT", 8000))
+    uvicorn.run("backend.api.main:app", host="0.0.0.0", port=port, reload=True)

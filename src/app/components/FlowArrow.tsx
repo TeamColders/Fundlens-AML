@@ -1,9 +1,12 @@
 interface FlowArrowProps {
   from: { x: number; y: number };
   to: { x: number; y: number };
-  amount: string;
+  amount?: string;
   color?: 'teal' | 'red';
   curved?: boolean;
+  showLabel?: boolean;
+  /** Stagger overlapping labels along the edge normal */
+  labelIndex?: number;
 }
 
 export default function FlowArrow({
@@ -12,80 +15,74 @@ export default function FlowArrow({
   amount,
   color = 'teal',
   curved = false,
+  showLabel = false,
+  labelIndex = 0,
 }: FlowArrowProps) {
   const fromX = `${from.x}%`;
   const fromY = `${from.y}%`;
   const toX = `${to.x}%`;
   const toY = `${to.y}%`;
 
-  const strokeColor = color === 'red' ? '#E31E24' : '#E31E24';
-  const opacity = color === 'red' ? 0.7 : 0.55;
+  const strokeColor = color === 'red' ? '#EF4444' : '#00C9A7';
+  const opacity = color === 'red' ? 0.75 : 0.5;
   const markerId = color === 'red' ? 'arrowhead-red' : 'arrowhead-teal';
 
   let pathD: string;
-  let labelX: string;
-  let labelY: string;
+  let labelX: number;
+  let labelY: number;
 
   if (curved) {
-    // Create a curved arc for the return path
-    // This goes up and over the other nodes
     const midX = (from.x + to.x) / 2;
-    const controlY = 15; // High arc at 15% from top
-
+    const controlY = 15;
     pathD = `M ${fromX} ${fromY} Q ${midX}% ${controlY}%, ${toX} ${toY}`;
-    labelX = `${midX}%`;
-    labelY = `${controlY - 3}%`; // Label above the arc
+    labelX = midX;
+    labelY = controlY - 4;
   } else {
-    // Straight line
     pathD = `M ${fromX} ${fromY} L ${toX} ${toY}`;
-    const midX = (from.x + to.x) / 2;
-    const midY = (from.y + to.y) / 2;
-    labelX = `${midX}%`;
-    labelY = `${midY - 2}%`; // Label slightly above the line
+    labelX = (from.x + to.x) / 2;
+    labelY = (from.y + to.y) / 2;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const stagger = (labelIndex - 2) * 2.5;
+    labelX += nx * stagger;
+    labelY += ny * stagger - 1.5;
   }
+
+  const displayLabel = showLabel && amount;
 
   return (
     <g>
-      {/* Arrow path */}
       <path
         d={pathD}
         fill="none"
         stroke={strokeColor}
         strokeWidth="1.5"
-        strokeDasharray="5 5"
+        strokeDasharray="4 4"
         opacity={opacity}
         markerEnd={`url(#${markerId})`}
-        className="animate-flow"
       />
 
-      {/* Amount label */}
-      <text
-        x={labelX}
-        y={labelY}
-        textAnchor="middle"
-        fill="#1a1a1a"
-        fontSize="9"
-        fontFamily="DM Mono"
-        fontWeight="600"
-        className="pointer-events-none select-none"
-        style={{ textShadow: '0 0 3px rgba(255,255,255,0.8)' }}
-      >
-        {amount}
-      </text>
-
-      <style>{`
-        @keyframes flow {
-          0% {
-            stroke-dashoffset: 0;
-          }
-          100% {
-            stroke-dashoffset: -10;
-          }
-        }
-        .animate-flow {
-          animation: flow 1s linear infinite;
-        }
-      `}</style>
+      {displayLabel && (
+        <text
+          x={`${labelX}%`}
+          y={`${labelY}%`}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill="#1F2937"
+          stroke="white"
+          strokeWidth={4}
+          paintOrder="stroke fill"
+          fontSize="10"
+          fontFamily="DM Mono"
+          fontWeight="600"
+          className="pointer-events-none select-none"
+        >
+          {amount}
+        </text>
+      )}
     </g>
   );
 }

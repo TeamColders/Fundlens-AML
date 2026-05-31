@@ -9,10 +9,11 @@ KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
 IN_TOPIC = "transactions.enriched"
 
 # Initialize GNN model globally
-model = FraudGAT()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = FraudGAT().to(device)
 try:
-    model.load_state_dict(torch.load("fundlens_gnn.pt"))
-    print("Loaded trained GNN model.")
+    model.load_state_dict(torch.load("models/gnn_v1.pt", map_location=device))
+    print(f"Loaded trained GNN model on {device}.")
 except Exception as e:
     print(f"Could not load trained model, using untrained weights: {e}")
 model.eval()

@@ -1,52 +1,199 @@
+"""
+Neo4j graph seeding script for FundLens.
+Loads synthetic transaction data into the graph database.
+"""
+
+import sys
+import logging
+from pathlib import Path
+
+# Add backend to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import pandas as pd
-from backend.graph.neo4j_client import get_session
+from backend.graph.neo4j_client import get_client
+from data.synthetic.fraud_scenarios import generate_transactions
+from datetime import datetime
 
-def create_indexes(session):
-    print("Creating indexes...")
-    session.run("CREATE INDEX account_id IF NOT EXISTS FOR (a:Account) ON (a.account_id)")
-    session.run("CREATE INDEX entity_id IF NOT EXISTS FOR (e:Entity) ON (e.entity_id)")
-    session.run("CREATE INDEX txn_timestamp IF NOT EXISTS FOR ()-[r:TRANSFERRED_TO]-() ON (r.timestamp)")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
-import json
 
-def load_data(json_path: str):
+def create_account_nodes(df: pd.DataFrame, client) -> int:
+    """Create Account nodes from transaction data."""
+    logger.info("Creating Account nodes...")
+
+    # Get unique accounts
+    senders = set(df["sender_account"].unique())
+    receivers = set(df["receiver_account"].unique())
+    all_accounts = senders | receivers
+
+    # Create account metadata
+    account_nodes = []
+    for account_id in all_accounts:
+        account_nodes.append(
+            {
+                "account_id": account_id,
+                "account_type": "savings",
+                "kyc_tier": 2,
+                "status": "active",
+                "is_dormant": False,
+                "created_date": datetime(2023, 1, 1).isoformat(),
+                "home_branch": "BR001",
+            }
+        )
+
+    # Merge in batches
+    total = client.batch_merge_nodes(account_nodes, "Account", batch_size=500)
+    logger.info(f"✓ Created {total} Account nodes")
+    return total
+
+
+def create_entity_nodes(df: pd.DataFrame, client) -> int:
+    """Create Entity nodes (one per account for simplicity)."""
+    logger.info("Creating Entity nodes...")
+
+    senders = set(df["sender_account"].unique())
+    receivers = set(df["receiver_account"].unique())
+    all_accounts = senders | receivers
+
+    entity_nodes = []
+    for i, account_id in enumerate(all_accounts):
+        entity_nodes.append(
+            {
+                "entity_id": f"ENT-{i:05d}",
+                "name_hash": f"name_{i}",
+                "pan_hash": f"pan_{i}",
+                "mobile_hash": f"mobile_{i}",
+                "kyc_tier": 2,
+            }
+        )
+
+    # Merge in batches
+    total = client.batch_merge_nodes(entity_nodes, "Entity", batch_size=500)
+    logger.info(f"✓ Created {total} Entity nodes")
+    return total
+
+
+def create_controlled_by_relationships(df: pd.DataFrame, client) -> int:
+    """Create CONTROLLED_BY relationships between accounts and entities."""
+    logger.info("Creating CONTROLLED_BY relationships...")
+
+    senders = set(df["sender_account"].unique())
+    receivers = set(df["receiver_account"].unique())
+    all_accounts = senders | receivers
+
+    relationships = []
+    for i, account_id in enumerate(all_accounts):
+        relationships.append(
+            {"account_id": account_id, "entity_id": f"ENT-{i:05d}"}
+        )
+
+    # Merge in batches
+    total = client.batch_merge_relationships(
+        relationships, "CONTROLLED_BY", batch_size=500
+    )
+    logger.info(f"✓ Created {total} CONTROLLED_BY relationships")
+    return total
+
+
+def create_transferred_to_relationships(df: pd.DataFrame, client) -> int:
+    """Create TRANSFERRED_TO relationships between accounts."""
+    logger.info("Creating TRANSFERRED_TO relationships...")
+
+    # Prepare relationship data
+    relationships = []
+    for _, row in df.iterrows():
+        rel = {
+            "sender_account": row["sender_account"],
+            "receiver_account": row["receiver_account"],
+            "transaction_id": row["transaction_id"],
+            "amount": float(row["amount"]),
+            "currency": row["currency"],
+            "timestamp": row["timestamp"].isoformat() if hasattr(row["timestamp"], 'isoformat') else str(row["timestamp"]),
+            "channel": row["channel"],
+            "is_fraud": bool(row["is_fraud"]),
+            "typology": row["typology"],
+            "case_id": row["case_id"],
+        }
+        relationships.append(rel)
+
+    # Merge in batches
+    total = client.batch_merge_relationships(
+        relationships, "TRANSFERRED_TO", batch_size=500
+    )
+    logger.info(f"✓ Created {total} TRANSFERRED_TO relationships")
+    return total
+
+
+def seed_graph(transactions_file: str = None) -> None:
     """
-    Load synthetic transaction JSON into Neo4j using APOC batching.
+    Main function to seed the graph database.
     """
-    with open(json_path, 'r') as f:
-        data = json.load(f)
-        
-    records = []
-    for i, graph in enumerate(data):
-        nodes = graph.get('nodes', [])
-        edges = graph.get('edges', [])
-        
-        fraud_nodes = {n['account_id']: n.get('is_fraud', 0) for n in nodes}
-        
-        for j, edge in enumerate(edges):
-            source = edge.get('source')
-            target = edge.get('target')
-            is_fraud = bool(fraud_nodes.get(source, 0) or fraud_nodes.get(target, 0))
-            
-            features = edge.get('features', {})
-            amount_log = features.get('amount_log_normalised', 0.5) * 5
-            
-            records.append({
-                "transaction_id": f"TXN-{i}-{j}",
-                "sender_account": source,
-                "receiver_account": target,
-                "amount": float(10 ** amount_log),
-                "currency": "USD",
-                "timestamp": "2023-10-01T12:00:00Z",
-                "channel": "online",
-                "branch_code": "BR-01",
-                "reference_number": f"REF-{i}-{j}",
-                "is_fraud": is_fraud,
-                "typology": "unknown"
-            })
-            
-    with get_session() as session:
-        create_indexes(session)
+    logger.info("=" * 60)
+    logger.info("FundLens Graph Seeding")
+    logger.info("=" * 60)
+
+    client = get_client()
+
+    # Verify connection
+    if not client.verify_connection():
+        logger.error("Cannot connect to Neo4j. Exiting.")
+        return
+
+    # Generate or load transactions
+    if transactions_file and Path(transactions_file).exists():
+        logger.info(f"Loading transactions from {transactions_file}...")
+        df = pd.read_csv(transactions_file)
+    else:
+        logger.info("Generating synthetic transactions...")
+        df = generate_transactions(10000)
+        # Save for future use
+        df.to_csv(
+            "/home/nathanpimenta/Projects/Fundlens-AML/data/synthetic/transactions.csv",
+            index=False,
+        )
+
+    # Convert timestamp column to datetime if it's a string
+    if df["timestamp"].dtype == "object":
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    logger.info(f"Loaded {len(df)} transactions")
+    logger.info(f"  Clean: {len(df[df['is_fraud'] == False])}")
+    logger.info(f"  Fraud: {len(df[df['is_fraud'] == True])}")
+
+    # Create indexes
+    logger.info("Creating indexes...")
+    client.create_indexes()
+
+    # Clear existing data (optional - comment out for incremental loads)
+    # logger.info("Clearing existing data...")
+    # with client.session() as session:
+    #     session.run("MATCH (n) DETACH DELETE n")
+
+    # Create nodes
+    create_account_nodes(df, client)
+    create_entity_nodes(df, client)
+
+    # Create relationships
+    create_controlled_by_relationships(df, client)
+    create_transferred_to_relationships(df, client)
+
+    # Print stats
+    logger.info("\n" + "=" * 60)
+    logger.info("Graph Statistics:")
+    logger.info("=" * 60)
+    stats = client.get_stats()
+    for key, value in stats.items():
+        logger.info(f"  {key}: {value}")
+
+    logger.info("=" * 60)
+    logger.info("✓ Graph seeding complete!")
+    logger.info("=" * 60)
+
+    client.close()
         
         print(f"Loading {len(records)} transactions into Neo4j...")
         

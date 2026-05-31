@@ -134,6 +134,11 @@ class FraudGAT(torch.nn.Module):
         subgraph = {"nodes": nodes, "edges": edges}
         data = SubgraphDataset.process_subgraph(subgraph)
         
+        device = next(self.parameters()).device
+        data.x = data.x.to(device)
+        data.edge_index = data.edge_index.to(device)
+        data.edge_attr = data.edge_attr.to(device)
+        
         with torch.no_grad():
             embeddings, logits = self.forward(data.x, data.edge_index, data.edge_attr)
             probs = torch.sigmoid(logits).squeeze(-1).tolist()

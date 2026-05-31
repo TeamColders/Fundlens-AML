@@ -2,7 +2,7 @@
 FundLens — Pydantic models for all API request/response schemas.
 """
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -14,12 +14,14 @@ class AlertStatus(str, Enum):
     CONFIRMED_FRAUD = "confirmed_fraud"
     DISMISSED       = "dismissed"
 
+
 class STRStage(str, Enum):
     ANALYSING_PATTERN  = "analysing_pattern"
     COMPILING_EVIDENCE = "compiling_evidence"
     DRAFTING_NARRATIVE = "drafting_narrative"
     COMPLETE           = "complete"
     ERROR              = "error"
+
 
 class RiskLevel(str, Enum):
     CRITICAL = "critical"
@@ -28,6 +30,238 @@ class RiskLevel(str, Enum):
     LOW      = "low"
 
 
+# ── ALERT MODELS ─────────────────────────────────────────────────
+class AlertDetail(BaseModel):
+    """Alert detail from graph query."""
+    account_id: str
+    risk_level: str
+    amount: float
+    account_type: str
+    is_hub: bool = False
+    is_dormant: bool = False
+    
+    class Config:
+        from_attributes = True
+
+
+class AlertEdge(BaseModel):
+    """Edge in alert subgraph."""
+    source: str
+    target: str
+    amount: float
+    timestamp: str
+    channel: str
+
+
+class AlertSubgraph(BaseModel):
+    """Subgraph for an alert."""
+    nodes: List[AlertDetail]
+    edges: List[AlertEdge]
+
+
+class Alert(BaseModel):
+    """Alert response model."""
+    case_id: str
+    typology: str
+    risk_score: float = Field(ge=0.0, le=1.0)
+    total_amount: float
+    accounts_count: int
+    hops: int
+    duration_minutes: float
+    channel: str
+    created_at: datetime
+    status: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    subgraph: Optional[AlertSubgraph] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AlertsResponse(BaseModel):
+    """Paginated alerts response."""
+    alerts: List[Alert]
+    total: int
+    page: int
+    limit: int
+
+
+class AlertStatusUpdate(BaseModel):
+    """Update alert status."""
+    status: str
+    investigator_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+# ── GRAPH MODELS ──────────────────────────────────────────────────
+class GraphNode(BaseModel):
+    """Graph node for visualization."""
+    id: str
+    label: str
+    risk_level: str
+    amount: float
+    account_type: str
+    is_hub: bool = False
+    is_dormant: bool = False
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class GraphEdge(BaseModel):
+    """Graph edge for visualization."""
+    source: str
+    target: str
+    label: str
+    amount: float
+    timestamp: str
+    channel: str
+    color: Optional[str] = None
+
+
+class GraphData(BaseModel):
+    """Graph data response."""
+    nodes: List[GraphNode]
+    edges: List[GraphEdge]
+    center_node: Optional[str] = None
+
+
+# ── GNN MODELS ────────────────────────────────────────────────────
+class NodeFeatures(BaseModel):
+    """Node features for GNN."""
+    account_id: str
+    features: List[float] = Field(min_length=12, max_length=12)
+
+
+class EdgeFeatures(BaseModel):
+    """Edge features for GNN."""
+    source: str
+    target: str
+    features: List[float] = Field(min_length=6, max_length=6)
+
+
+class SubgraphRequest(BaseModel):
+    """GNN scoring request."""
+    case_id: str
+    nodes: List[NodeFeatures]
+    edges: List[EdgeFeatures]
+
+
+class NodeScore(BaseModel):
+    """Per-node fraud score."""
+    account_id: str
+    score: float = Field(ge=0.0, le=1.0)
+
+
+class GNNScore(BaseModel):
+    """GNN inference response."""
+    case_id: str
+    fraud_probability: float = Field(ge=0.0, le=1.0)
+    node_scores: List[NodeScore]
+    inference_time_ms: float
+    model_version: str
+    threshold_crossed: bool
+    risk_level: str
+
+
+# ── STR MODELS ────────────────────────────────────────────────────
+class STRReport(BaseModel):
+    """STR (Suspicious Transaction Report) response."""
+    case_id: str
+    english_narrative: str
+    hindi_narrative: Optional[str] = None
+    recommended_action: str
+    regulatory_basis: str
+    generated_at: datetime
+    model_used: str
+    generation_time_seconds: float
+    full_report_text: str
+
+
+class STRSubmitRequest(BaseModel):
+    """Submit STR for filing."""
+    case_id: str
+    report_text: str
+    investigator_id: Optional[str] = None
+
+
+class STRGenerationEvent(BaseModel):
+    """SSE event for STR generation."""
+    stage: str
+    message: str
+    progress: int
+    report: Optional[STRReport] = None
+
+
+# ── ENTITY MODELS ─────────────────────────────────────────────────
+class EntityProfile(BaseModel):
+    """Entity profile."""
+    entity_id: str
+    name_hash: str
+    kyc_tier: int
+    account_ids: List[str]
+    total_volume: float
+    transaction_count: int
+    risk_score: float
+
+
+# ── ANALYTICS MODELS ──────────────────────────────────────────────
+class DailyStats(BaseModel):
+    """Daily statistics."""
+    date: str
+    alerts_created: int
+    alerts_resolved: int
+    fraud_amount_detected: float
+    transactions_processed: int
+
+
+class AnalyticsData(BaseModel):
+    """Analytics response."""
+    daily_stats: List[DailyStats]
+    typology_distribution: Dict[str, int]
+    high_risk_accounts: List[str]
+    detection_rate: float
+
+
+# ── BLOCKCHAIN MODELS ─────────────────────────────────────────────
+class BlockchainBlock(BaseModel):
+    """Blockchain evidence block."""
+    block_id: int
+    case_id: str
+    event_type: str
+    timestamp: str
+    actor_id: Optional[str] = None
+    payload_hash: str
+    block_hash: str
+
+
+class BlockchainData(BaseModel):
+    """Blockchain audit trail."""
+    case_id: str
+    blocks: List[BlockchainBlock]
+    chain_valid: bool
+
+
+# ── QUERY MODELS ──────────────────────────────────────────────────
+class QueryRequest(BaseModel):
+    """Natural language query request."""
+    query: str
+
+
+class QueryResult(BaseModel):
+    """Query execution result."""
+    cypher: str
+    results: List[Dict[str, Any]]
+    execution_time_ms: float
+
+
+# ── HEALTH CHECK ──────────────────────────────────────────────────
+class ServiceHealth(BaseModel):
+    """Service health status."""
+    status: str
+    neo4j: bool
+    postgres: bool
+    redis: bool
+    timestamp: datetime
 # ── GRAPH MODELS ─────────────────────────────────────────────────
 class GraphNode(BaseModel):
     id:           str

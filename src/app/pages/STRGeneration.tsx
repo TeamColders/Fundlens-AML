@@ -1,21 +1,27 @@
 import { ArrowLeft, Check, Edit3, ExternalLink, Save, Download, Globe, Loader2 } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { useState, useEffect } from 'react';
 import MiniFlowGraph from '../components/MiniFlowGraph';
 import { useSTRGeneration } from '../../hooks/useSTRGeneration';
 import { useBlockchain } from '../../hooks/useBlockchain';
+import { useAlertDetail } from '../../hooks/useAlerts';
 
 export default function STRGeneration() {
   const navigate = useNavigate();
+  const { id } = useParams<{ id: string }>();
+  const caseId = id || 'CASE-2847';
+  
   const [language, setLanguage] = useState<'EN' | 'HI'>('EN');
+  const [draftSaved, setDraftSaved] = useState(false);
 
   const { stage, message, progress, report, error, generating, generate } = useSTRGeneration();
-  const { chain } = useBlockchain('CASE-2847');
+  const { chain } = useBlockchain(caseId);
+  const { detail } = useAlertDetail(caseId);
 
   // Auto-start generation on mount
   useEffect(() => {
-    generate('CASE-2847');
-  }, [generate]);
+    generate(caseId);
+  }, [generate, caseId]);
 
   const today = new Date().toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -25,6 +31,11 @@ export default function STRGeneration() {
 
   const handleExport = () => {
     console.log('Exporting PDF');
+  };
+  
+  const handleSaveDraft = () => {
+    setDraftSaved(true);
+    setTimeout(() => setDraftSaved(false), 3000);
   };
 
   const stages = [
@@ -71,9 +82,12 @@ export default function STRGeneration() {
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 border border-gray-400 text-gray-600 hover:bg-gray-100 transition-colors rounded text-sm flex items-center gap-2">
-            <Save className="w-4 h-4" />
-            Save Draft
+          <button 
+            onClick={handleSaveDraft}
+            className={`px-4 py-2 border transition-colors rounded text-sm flex items-center gap-2 ${draftSaved ? 'bg-green-50 border-green-500 text-green-700' : 'border-gray-400 text-gray-600 hover:bg-gray-100'}`}
+          >
+            {draftSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            {draftSaved ? 'Draft Saved' : 'Save Draft'}
           </button>
           <button
             onClick={handleExport}
@@ -107,23 +121,23 @@ export default function STRGeneration() {
             <div className="space-y-3 text-sm" style={{ fontFamily: 'DM Mono' }}>
               <div className="flex justify-between">
                 <span className="text-gray-600">Case ID:</span>
-                <span className="text-gray-900">CASE-2847</span>
+                <span className="text-gray-900">{caseId}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Typology:</span>
-                <span className="text-gray-900">Round-trip Layering</span>
+                <span className="text-gray-900">{detail?.typology || 'Round-trip Layering'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Amount:</span>
-                <span className="text-gray-900">₹47,23,000</span>
+                <span className="text-gray-900">₹{detail?.total_amount?.toLocaleString() || '47,23,000'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Accounts involved:</span>
-                <span className="text-gray-900">7</span>
+                <span className="text-gray-900">{detail?.accounts_count || 7}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Risk score:</span>
-                <span className="text-[#E31E24] font-bold">94%</span>
+                <span className="text-[#E31E24] font-bold">{detail?.confidence || '94%'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Regulatory reference:</span>
@@ -290,12 +304,12 @@ export default function STRGeneration() {
               <div className="h-[1px] bg-gray-300 my-4" />
 
               <div>
-                <div className="text-gray-900 font-bold mb-2">CASE REF: CASE-2847</div>
-                <div>TYPOLOGY: Round-trip Layering</div>
-                <div>RISK SCORE: 94% (GNN confidence)</div>
-                <div>ACCOUNTS INVOLVED: 7</div>
-                <div>TOTAL AMOUNT: ₹47,23,000</div>
-                <div>PERIOD: 6 hours 14 minutes</div>
+                <div className="text-gray-900 font-bold mb-2">CASE REF: {caseId}</div>
+                <div>TYPOLOGY: {detail?.typology || 'Round-trip Layering'}</div>
+                <div>RISK SCORE: {detail?.confidence || '94%'} (GNN confidence)</div>
+                <div>ACCOUNTS INVOLVED: {detail?.accounts_count || 7}</div>
+                <div>TOTAL AMOUNT: ₹{detail?.total_amount?.toLocaleString() || '47,23,000'}</div>
+                <div>PERIOD: {detail?.duration_display || '6 hours 14 minutes'}</div>
               </div>
 
               <div className="h-[1px] bg-gray-300 my-4" />
