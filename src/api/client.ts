@@ -12,9 +12,10 @@ import type {
   NLQueryResult, HealthStatus,
   PlatformConfig, MobileDashboard, AuditLogEntry, ConfigUser,
 } from './types';
+import { getApiBase } from '../lib/apiBase';
 
 // ── Configuration ────────────────────────────────────────────────
-const API_BASE = '/api';
+const API_BASE = getApiBase();
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;

@@ -48,6 +48,19 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def _cors_origins() -> list[str]:
+    origins = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ]
+    extra = os.getenv("CORS_ORIGINS", "").strip()
+    if extra:
+        origins.extend(o.strip() for o in extra.split(",") if o.strip())
+    return list(dict.fromkeys(origins))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("FundLens API starting up...")
@@ -58,6 +71,15 @@ async def lifespan(app: FastAPI):
     init_db()
     init_str_tables()
     init_config_tables()
+
+    if os.getenv("FUNDLENS_AUTO_SEED", "").lower() in ("1", "true", "yes"):
+        try:
+            from backend.database.demo_seed import ensure_local_demo_data
+
+            if ensure_local_demo_data():
+                logger.info("Seeded demo cases (FUNDLENS_AUTO_SEED)")
+        except Exception as exc:
+            logger.warning("Auto-seed skipped: %s", exc)
 
     try:
         from backend.graph.neo4j_client import get_client
@@ -91,12 +113,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -190,6 +207,47 @@ def broadcast_alert(alert: dict):
         loop.create_task(manager.broadcast({"type": "new_alert", "data": alert}))
     except RuntimeError:
         pass
+
+
+def _mount_frontend() -> None:
+    """Serve Vite build from ./dist when SERVE_FRONTEND=1 (single-container deploy)."""
+    if os.getenv("SERVE_FRONTEND", "").lower() not in ("1", "true", "yes"):
+        return
+
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    root = Path(__file__).resolve().parents[2]
+    dist = root / "dist"
+    if not dist.is_dir():
+        logger.warning("SERVE_FRONTEND=1 but dist/ not found — UI not mounted")
+        return
+
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="static-assets")
+
+    @app.get("/", include_in_schema=False)
+    async def spa_index():
+        return FileResponse(dist / "index.html")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        if full_path.startswith("api") or full_path.startswith("ws"):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = dist / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(dist / "index.html")
+
+    logger.info("Serving frontend from %s", dist)
+
+
+_mount_frontend()
 
 
 if __name__ == "__main__":

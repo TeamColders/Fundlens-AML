@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-DB_PATH = Path(__file__).resolve().parents[2] / "fundlens_demo.db"
+from backend.paths import demo_db_path
+
+DB_PATH = demo_db_path()
 
 
 def _conn() -> sqlite3.Connection:

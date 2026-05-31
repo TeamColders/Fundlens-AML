@@ -1,0 +1,26 @@
+# Render.com — single web service (Docker: API + UI)
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: fundlens
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_STR_MODEL
+        value: gemini-2.0-flash
+      - key: FUNDLENS_AUTO_SEED
+        value: "1"
+      - key: SERVE_FRONTEND
+        value: "1"
+      - key: FUNDLENS_DATA_DIR
+        value: /data
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disk:
+      name: fundlens-data
+      mountPath: /data
+      sizeGB: 1

@@ -4,13 +4,13 @@ Persisted platform configuration, audit log, and connection registry.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
-CONFIG_DB_PATH = Path(os.getenv("FUNDLENS_CONFIG_DB", "fundlens_config.db"))
+from backend.paths import config_db_path
+
+CONFIG_DB_PATH = config_db_path()
 
 DEFAULT_THRESHOLDS = {
     "structuring_threshold_inr": 200_000,

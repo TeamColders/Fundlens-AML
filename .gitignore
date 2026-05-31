@@ -55,6 +55,7 @@ training_curves.png
 training_report.json
 FundLens_EvidenceChain/
 FundLens_Graph_Complete/
+docs/
 models/
 *.pt
 *.pth

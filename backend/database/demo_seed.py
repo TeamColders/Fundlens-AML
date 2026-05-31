@@ -725,9 +725,11 @@ def seed_local(
     nx_results: dict,
 ) -> None:
     """Write all seed data to SQLite + JSON files. No infrastructure needed."""
-    DB_PATH = Path("fundlens_demo.db")
-    DATA_DIR = Path("data")
-    DATA_DIR.mkdir(exist_ok=True)
+    from backend.paths import demo_db_path, project_root
+
+    DB_PATH = demo_db_path()
+    DATA_DIR = project_root() / "data"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── SQLite ───────────────────────────────────────────────────
     con = sqlite3.connect(DB_PATH)
@@ -1184,6 +1186,30 @@ def print_summary(all_accounts, all_txns, nx_results):
 # ════════════════════════════════════════════════════════════════
 # MAIN
 # ════════════════════════════════════════════════════════════════
+
+def ensure_local_demo_data() -> bool:
+    """
+    Seed SQLite demo cases if fundlens_demo.db is missing.
+    Used on cloud cold start (FUNDLENS_AUTO_SEED=1).
+    Returns True if seeding ran.
+    """
+    from backend.paths import demo_db_path
+
+    if demo_db_path().exists():
+        return False
+
+    accs_2847, txns_2847 = build_case_2847()
+    accs_2848, txns_2848 = build_case_2848()
+    accs_2849, txns_2849 = build_case_2849()
+    acc_map: dict[str, Account] = {}
+    for acc in accs_2847 + accs_2848 + accs_2849:
+        acc_map[acc.account_id] = acc
+    all_accounts = list(acc_map.values())
+    all_txns = txns_2847 + txns_2848 + txns_2849
+    nx_results = run_networkx_analysis(accs_2847, txns_2847) or {}
+    seed_local(all_accounts, all_txns, nx_results)
+    return True
+
 
 def main():
     parser = argparse.ArgumentParser(

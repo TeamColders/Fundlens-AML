@@ -1,4 +1,5 @@
 import type { STRReport } from '../api/types';
+import { getApiBase } from './apiBase';
 
 export interface CaseDetailForStr {
   typology?: string;
@@ -56,7 +57,7 @@ export function downloadBlob(blob: Blob, filename: string) {
 }
 
 export async function downloadStrPdf(caseId: string): Promise<void> {
-  const res = await fetch(`/api/str/${encodeURIComponent(caseId)}/pdf`);
+  const res = await fetch(`${getApiBase()}/str/${encodeURIComponent(caseId)}/pdf`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'PDF download failed');
@@ -66,7 +67,7 @@ export async function downloadStrPdf(caseId: string): Promise<void> {
 }
 
 export async function downloadStrText(caseId: string): Promise<void> {
-  const res = await fetch(`/api/str/${encodeURIComponent(caseId)}/download`);
+  const res = await fetch(`${getApiBase()}/str/${encodeURIComponent(caseId)}/download`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'Download failed');

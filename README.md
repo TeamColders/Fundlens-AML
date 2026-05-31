@@ -1,405 +1,293 @@
 # FundLens — AI-Powered AML Fraud Detection System
 
-**Building in 4 weeks. Submitting May 31, 2026 (iDEA 2.0 Round 2).**
+**iDEA 2.0 Round 2 · Union Bank of India · Fund flow / AML**
 
-> FundLens is an Anti-Money Laundering (AML) system that uses Graph Neural Networks (GNN), Neo4j pattern matching, and **Google Gemini** to detect and investigate financial fraud typologies in real-time. Built for Union Bank of India's fund-flow / AML problem statement (iDEA 2.0).
+FundLens is an Anti-Money Laundering (AML) platform that combines graph analytics, GNN scoring, **Google Gemini**, and a cryptographic evidence chain to detect and investigate fraud typologies in real time.
 
-## 📋 Problem Statement
+## Problem statement
 
-Banks process millions of transactions daily, but manual AML reviews catch only a fraction of suspicious patterns. FundLens automates detection of 5 FATF-recognized money laundering typologies using:
+Banks process millions of transactions daily, but manual AML reviews catch only a fraction of suspicious patterns. FundLens automates detection of FATF-recognized typologies using:
 
-- **Graph pattern matching** for structural anomalies (round-trip layering, fan-outs)
-- **Machine learning** for behavioral anomalies (dormant activation, velocity spikes)
-- **Generative AI** for regulatory report drafting (STR generation in Hindi+English)
-- **Blockchain** for immutable audit trails
+- **Graph pattern matching** — round-trip layering, fan-out/fan-in, mule chains
+- **Machine learning** — dormant activation, velocity spikes, hub accounts
+- **Generative AI** — bilingual STR drafting (English + Hindi)
+- **Evidence audit trail** — append-only SHA-256 chain per case
 
-## 🚀 Quick Start (5 mins)
+---
 
-### 1. Clone & Setup
+## Run the project
+
+### First-time setup
+
 ```bash
 cd Fundlens-AML
-python3 -m venv venv
-source venv/bin/activate
+
+# Python environment (pick one)
+python3 -m venv venv && source venv/bin/activate
+# OR: conda activate fundlens
+
 pip install -r requirements.txt
-# Optional GNN training (skip for demo if install fails on Python 3.13):
+# Optional GNN / training stack (large; skip for demo):
 # pip install -r requirements-ml.txt
+
 cp .env.example .env
 # Edit .env — set GEMINI_API_KEY from https://aistudio.google.com/apikey
+
+# Seed demo cases into SQLite (no Docker required)
+python3 backend/database/demo_seed.py --mode local
+
+# Frontend dependencies
+npm install
 ```
 
-### 1b. Laptop-only demo (no Docker)
+Shortcut (seeds data and prints next steps):
+
 ```bash
+chmod +x run_demo.sh
 ./run_demo.sh
+```
+
+### Run every time (two terminals)
+
+**Terminal 1 — API**
+
+```bash
+cd Fundlens-AML
+source venv/bin/activate   # or: conda activate fundlens
 python3 -m uvicorn backend.api.main:app --reload --port 8000
+```
+
+**Terminal 2 — UI**
+
+```bash
+cd Fundlens-AML
 npm run dev
 ```
 
-### 2. Start Infrastructure
-```bash
-docker-compose up -d
-# Wait 30 seconds for services to be healthy
-sleep 30
-docker-compose ps
-```
+| URL | Purpose |
+|-----|---------|
+| http://localhost:5173 | React app (Vite proxies `/api` → port 8000) |
+| http://localhost:8000/docs | Swagger API explorer |
+| http://localhost:8000/api/health | Health check |
 
-### 3. Seed Graph Database
-```bash
-python -m backend.graph.seed_graph
-# Output: ✓ Created 500 Account nodes, 10000 transactions
-```
+Quick checks:
 
-### 4. Start FastAPI Backend
-```bash
-uvicorn backend.api.main:app --reload --port 8000
-# Open http://localhost:8000/docs for API explorer
-```
-
-### 5. Test Endpoints
 ```bash
 curl http://localhost:8000/api/health
 curl http://localhost:8000/api/alerts
+curl http://localhost:8000/api/analytics
 ```
 
-## 📊 What's Implemented ✅
+### Using the UI
 
-### Week 1 - Data & Graph (Complete)
+1. Open **http://localhost:5173**
+2. Select a case on the **Investigation Dashboard** (case is stored in URL as `?case=`)
+3. Use the bottom nav: Graph, STR, Entity, Analytics, AI Query, Audit Trail, Configuration, Mobile
 
-**1. Synthetic Fraud Data Generator** (`data/synthetic/fraud_scenarios.py`)
-- 10,000 realistic transactions (9000 clean, 1000 fraud)
-- 5 FATF typologies implemented:
-  - Round-trip layering: A→B,C,D (split)→E (consolidate)→A (return)
-  - Structuring: 8-15 transfers just below ₹2L threshold
-  - Dormant activation: Sleeping account suddenly active
-  - Fan-out fan-in: One source → many intermediaries → one destination
-  - Mule chain: Sequential A→B→C→D with progressive skimming
+---
 
-**2. Neo4j Graph Database** (`backend/graph/`)
-- `neo4j_client.py`: Connection, batch operations, indexing
-- `seed_graph.py`: Loads 10k transactions into Neo4j
-- Creates Account nodes, Entity nodes, TRANSFERRED_TO relationships
-- Automatic performance indexes
+## Optional: full stack (Neo4j + Postgres + Kafka)
 
-**3. Typology Detection** (`backend/graph/typology_queries.py`)
-- 5 Cypher pattern queries with confidence scoring (0.75-0.94)
-- Each returns: case_id, accounts involved, total_amount, duration, pattern details
-
-**4. FastAPI Backend** (`backend/api/main.py`)
-- All core endpoints implemented and tested
-- WebSocket support for real-time alerts
-- CORS configured for Vite frontend
-- Comprehensive Pydantic models for validation
-
-### API Endpoints (All Working)
-
-| Method | Endpoint | Status |
-|--------|----------|--------|
-| GET | `/api/health` | ✅ Operational check |
-| GET | `/api/alerts` | ✅ List active alerts with pagination |
-| GET | `/api/alerts/{case_id}` | ✅ Full case detail + subgraph |
-| POST | `/api/alerts/{case_id}/status` | ✅ Update alert status |
-| GET | `/api/graph/{case_id}` | ✅ Graph data for visualization |
-| GET | `/api/entities/{account_id}` | ✅ Entity profile |
-| GET | `/api/analytics` | ✅ Dashboard stats |
-| POST | `/api/score` | ✅ GNN scoring endpoint |
-| POST | `/api/str/{case_id}/generate` | ✅ SSE stream — Gemini STR draft |
-| POST | `/api/str/{case_id}/draft` | ✅ Save investigator draft |
-| GET | `/api/str/{case_id}/pdf` | ✅ Download PDF |
-| GET | `/api/str/{case_id}/download` | ✅ Download .txt |
-| POST | `/api/str/{case_id}/submit` | ✅ Submit to FIU-IND (+ blockchain) |
-| GET | `/api/blockchain/{case_id}` | ✅ Audit trail |
-| WS | `/ws/alerts` | ✅ Real-time websocket |
-
-### Sample Response
+For graph DB, Postgres batch ingest, and Kafka pipeline:
 
 ```bash
-$ curl http://localhost:8000/api/alerts?limit=2
-{
-  "alerts": [
-    {
-      "case_id": "CASE-00001",
-      "typology": "round_trip_layering",
-      "risk_score": 0.94,
-      "total_amount": 4723000,
-      "accounts_count": 7,
-      "hops": 3,
-      "duration_minutes": 360.5,
-      "channel": "NEFT",
-      "status": "active",
-      "confidence": 0.85
-    }
-  ],
-  "total": 1,
-  "page": 1,
-  "limit": 20
-}
+docker compose up -d
+sleep 30
+docker compose ps
+
+python3 -m backend.graph.seed_graph
+python3 backend/database/demo_seed.py --mode local
+
+# Then start API + frontend as above
 ```
+
+Neo4j Browser: http://localhost:7474 (`neo4j` / `fundlens123`)
+
+---
+
+## Laptop-only demo (no Docker)
+
+If Neo4j or Postgres are unavailable, the API **automatically falls back** to:
+
+| Store | File | Purpose |
+|-------|------|---------|
+| Cases / transactions | `fundlens_demo.db` | Alert queue, subgraphs, entity profiles |
+| Evidence chain | `fundlens_evidence.db` | Audit trail blocks |
+| Admin config | `fundlens_config.db` | Thresholds, FIU settings, users |
+
+- NL Query uses **SQL + Gemini** when Neo4j is down
+- STR generation uses a **template fallback** if `GEMINI_API_KEY` is missing
+
+Delete `fundlens_evidence.db` to reset a corrupted audit chain; it rebuilds on next visit.
+
+---
 
 ## STR generation (Gemini)
 
-1. Set `GEMINI_API_KEY` in `.env` (see `.env.example`).
-2. Seed data: `python3 backend/database/demo_seed.py --mode local`
-3. Start API + frontend; open a case → **Generate STR Report**.
-4. On the STR page: **Save draft**, **Download PDF**, **Download .txt**, edit narrative, **Submit**.
+1. Set `GEMINI_API_KEY` and `GEMINI_STR_MODEL=gemini-2.0-flash` in `.env` (avoid `flash-lite` on free tier — often quota 0).
+2. Select a case → **Generate STR Report**
+3. **Save draft**, **Download PDF**, **Download .txt**, **Submit** (writes evidence block)
 
-Without an API key, a template fallback STR is generated so the demo still runs.
+Restart uvicorn after changing `.env`.
 
-## 🔨 Still To Build
+---
 
-### Week 2 - GNN Model
-- [ ] Graph Attention Network (`backend/ml/gnn_model.py`)
-- [ ] Training script (`backend/ml/gnn_train.py`)
-- [ ] Inference service (`backend/ml/gnn_inference.py`)
-- [ ] Elliptic dataset integration
+## API endpoints
 
-### Week 3 - LLM & Blockchain
-- [x] Gemini STR generation (`backend/llm/str_generator.py`) — SSE + bilingual narrative
-- [x] Save draft / PDF / TXT export (`backend/api/routes/str_report.py`)
-- [x] Blockchain evidence chain (`backend/blockchain/evidence_chain.py`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Service health |
+| GET | `/api/alerts` | Alert list |
+| GET | `/api/alerts/{case_id}` | Case detail + subgraph |
+| POST | `/api/alerts/{case_id}/status` | Update status |
+| GET | `/api/graph/{case_id}` | Graph for visualization |
+| GET | `/api/entities/{account_id}` | Entity profile |
+| POST | `/api/entities/{account_id}/watchlist` | Watchlist action |
+| GET | `/api/analytics` | Dashboard KPIs |
+| POST | `/api/query` | Natural-language query |
+| POST | `/api/str/{case_id}/generate` | SSE — Gemini STR |
+| POST | `/api/str/{case_id}/draft` | Save STR draft |
+| GET | `/api/str/{case_id}/pdf` | Download PDF |
+| POST | `/api/str/{case_id}/submit` | Submit STR + blockchain |
+| GET | `/api/blockchain/{case_id}` | Evidence chain |
+| GET | `/api/blockchain/{case_id}/verify` | Verify chain |
+| GET | `/api/blockchain/{case_id}/export` | Export JSON |
+| GET | `/api/config` | Platform configuration |
+| PATCH | `/api/config/thresholds` | Save detection thresholds |
+| GET | `/api/config/audit-log` | Config audit log |
+| GET | `/api/mobile/dashboard` | Mobile alert feed |
+| POST | `/api/mobile/alerts/{case_id}/acknowledge` | Mobile investigate |
+| WS | `/ws/alerts` | Real-time alerts |
 
-### Week 4 - Frontend
-- [x] TypeScript API client (`src/api/client.ts`)
-- [x] Fund-flow graph + STR screen wired to case `?case=`
-- [ ] Sigma.js (optional; SVG graph works for demo)
+---
 
-### Deliverables (Due May 31)
-- [ ] D1: Problem & Solution Brief
-- [ ] D2: Working prototype demo (YouTube, min 5 min)
-- [ ] D3: Technical architecture
-- [ ] D4: Public GitHub repo
-- [ ] D5: Pitch deck + video
-
-## 🏗️ Architecture
+## Architecture
 
 ```
 Browser (http://localhost:5173)
-    ↓
-FastAPI Backend (http://localhost:8000)
-    ├→ Neo4j (bolt://localhost:7687)
-    ├→ PostgreSQL (localhost:5432)
-    ├→ Redis (localhost:6379)
-    ├→ GNN Model (localhost:8001)
-    ├→ Claude API (Anthropic)
-    └→ Kafka (localhost:9092)
+    ↓  /api proxy
+FastAPI (http://localhost:8000)
+    ├→ Neo4j          (optional — bolt://localhost:7687)
+    ├→ PostgreSQL     (optional — falls back to SQLite)
+    ├→ SQLite demo    fundlens_demo.db / fundlens_evidence.db / fundlens_config.db
+    ├→ Google Gemini  STR + NL query + NL-to-Cypher
+    └→ Kafka          (optional — ingestion pipeline)
 ```
 
-## 📁 Project Structure
+---
+
+## Project structure
 
 ```
-fundlens/
+Fundlens-AML/
 ├── backend/
-│   ├── api/
-│   │   ├── main.py              ✅ FastAPI app
-│   │   ├── models.py            ✅ Pydantic schemas
-│   │   └── routes/              📁 Endpoint implementations
-│   ├── graph/
-│   │   ├── neo4j_client.py      ✅ Graph operations
-│   │   ├── seed_graph.py        ✅ Data loading
-│   │   └── typology_queries.py  ✅ Pattern detection
-│   ├── ml/
-│   │   ├── gnn_model.py         🔨 GNN architecture
-│   │   ├── gnn_train.py         🔨 Training
-│   │   └── gnn_inference.py     🔨 Inference
-│   ├── llm/
-│   │   ├── prompts.py           🔨 Claude prompts
-│   │   └── str_generator.py     🔨 Report generation
-│   └── blockchain/
-│       └── evidence_chain.py    🔨 Audit trail
-├── data/synthetic/
-│   ├── fraud_scenarios.py       ✅ Data generator
-│   └── transactions.csv         ✅ Generated data
-├── frontend/                    📁 React app (Figma designs)
-│   └── src/
-│       ├── api/client.ts        🔨 API client
-│       └── hooks/useGraphData   🔨 Graph hook
-├── models/gnn_v1.pt            📁 Trained weights
-├── docker-compose.yml           ✅ Infrastructure
-├── requirements.txt             ✅ Dependencies
-├── .env                         ✅ Configuration
-└── README.md                    ✅ This file
+│   ├── api/main.py              FastAPI app + lifespan
+│   ├── api/routes/              alerts, graph, str, blockchain, config, mobile, query, …
+│   ├── blockchain/              evidence_chain.py, bootstrap.py
+│   ├── database/                demo_data.py, demo_seed.py, config_store.py, query_engine.py
+│   ├── graph/                   neo4j_client.py, seed_graph.py, typology_queries.py
+│   ├── llm/                     str_generator.py, prompts.py, str_pdf.py
+│   └── ml/                      gnn_model.py (optional — requirements-ml.txt)
+├── src/                         React + Vite UI
+│   ├── api/client.ts
+│   └── app/pages/               Dashboard, Graph, STR, Analytics, NL Query, Audit, Admin, Mobile
+├── data/                        demo_seed.json, case JSON, synthetic generators
+├── requirements.txt             Core API (Python 3.11–3.14)
+├── requirements-ml.txt          Optional PyTorch / GNN
+├── run_demo.sh                  Seed SQLite + print run commands
+├── docker-compose.yml           Neo4j, Postgres, Kafka, Redis
+└── .env.example
 ```
 
-✅ = Complete | 🔨 = In Progress | 📁 = Directory
+---
 
-## 🧪 Testing
+## Environment variables
 
-### Verify Graph Loading
-```bash
-python -c "
-from backend.graph.neo4j_client import get_client
-stats = get_client().get_stats()
-print(f'Accounts: {stats[\"accounts\"]}')
-print(f'Fraud edges: {stats[\"fraud_transfers\"]}')
-"
-```
+Copy `.env.example` to `.env`:
 
-### Detect Patterns
-```bash
-python -c "
-from backend.graph.typology_queries import detect_all_patterns
-from backend.graph.neo4j_client import get_client
-with get_client().session() as s:
-    patterns = detect_all_patterns(s)
-    for typology, matches in patterns.items():
-        print(f'{typology}: {len(matches)} matches')
-"
-```
-
-### Test API Endpoints
-```bash
-# All alerts
-curl -s http://localhost:8000/api/alerts | jq '.alerts | length'
-
-# Specific case
-curl -s http://localhost:8000/api/alerts/CASE-00001 | jq '.nodes | length'
-
-# API docs
-open http://localhost:8000/docs
-```
-
-## 📊 Data Flow Example
-
-**Round-Trip Layering Detection:**
-
-```
-Step 1: Generate Transactions
-  Synthetic generator creates:
-  - Origin account: ACC-0041
-  - Intermediaries: ACC-0112, ACC-0203, ACC-0317
-  - Hub: ACC-0089
-  - Pattern: origin splits → hub consolidates → origin returns
-
-Step 2: Load into Neo4j
-  Account nodes ─→ TRANSFERRED_TO ─→ Account nodes
-  (Marked: is_fraud=true, case_id=CASE-001, typology=round_trip_layering)
-
-Step 3: Pattern Detection
-  Cypher query finds circular flow:
-  - Duration: 360 minutes
-  - Total amount: ₹47.23L
-  - Confidence: 0.94
-
-Step 4: API Response
-  GET /api/alerts returns case with risk_score=0.94
-
-Step 5: Frontend Visualization
-  Sigma.js graph shows accounts with money flow animation
-```
-
-## 🔐 Environment Setup
-
-### .env File
 ```env
-# Neo4j
+# Neo4j (optional)
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=fundlens123
 
-# PostgreSQL
+# PostgreSQL (optional)
 POSTGRES_URL=postgresql://postgres:fundlens123@localhost:5432/fundlens
 
-# Redis
+# Gemini — STR + NL query
+GEMINI_API_KEY=your_key_here
+GEMINI_STR_MODEL=gemini-2.0-flash
+
+# Kafka / Redis (optional)
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 REDIS_URL=redis://localhost:6379
 
-# Anthropic (Claude)
-ANTHROPIC_API_KEY=sk-ant-...  # Required for STR generation
-
-# API Configuration
-API_PORT=8000
-CORS_ORIGINS=http://localhost:5173
-
-# Environment
-BLOCKCHAIN_MODE=DEMO
+# Evidence chain (optional overrides)
+# FUNDLENS_BLOCKCHAIN_MODE=demo
+# FUNDLENS_EVIDENCE_DB=fundlens_evidence.db
+# FUNDLENS_CONFIG_DB=fundlens_config.db
 ```
 
-## 📞 Troubleshooting
+---
 
-### Neo4j Connection Failed
-```bash
-docker-compose ps  # Check if neo4j container is running
-docker logs fundlens-neo4j  # View logs
-docker-compose restart neo4j
-```
+## Troubleshooting
 
-### Port Already in Use
+**Port 8000 in use**
+
 ```bash
-# Check what's using port 8000
 lsof -i :8000
-# Kill process if needed
 kill -9 <PID>
 ```
 
-### Out of Memory
+**No alerts in UI**
+
 ```bash
-# Reduce batch size in neo4j_client.py
-# Default is 500, try 100 for low-RAM machines
-client.batch_merge_relationships(rels, "TRANSFERRED_TO", batch_size=100)
+python3 backend/database/demo_seed.py --mode local
+curl http://localhost:8000/api/alerts
 ```
 
-## 🎯 Next Steps (This Week)
+**Gemini STR shows template fallback**
 
-1. ✅ **Complete Week 1:** Graph pipeline operational
-2. 🔨 **Start Week 2:** Build GNN model training
-3. 🔨 **Prepare Demo:** Create exact UI-matching test cases
-4. 📸 **Record D2 Video:** 5-10 min walkthrough of working system
+- Confirm `GEMINI_API_KEY` in `.env`
+- Use `GEMINI_STR_MODEL=gemini-2.0-flash` (not `flash-lite`)
+- Restart uvicorn; wait ~60s after 429 quota errors before retrying
 
-## 💡 Key Insights
+**Neo4j connection failed**
 
-- **Synthetic Data**: Real patterns replicate actual ML detection challenges
-- **Pattern Confidence**: Each typology has different confidence (0.75-0.94)
-- **Neo4j Performance**: Graph queries on 10k transactions complete in <100ms
-- **Modular Design**: Each component can be swapped (Neo4j↔SQL, Claude↔Gemini)
+```bash
+docker compose ps
+docker compose restart neo4j
+```
 
-## 📚 Resources
-
-- [FATF Money Laundering Typologies](https://www.fatf-gafi.org/publications/)
-- [Neo4j Cypher Manual](https://neo4j.com/docs/cypher-manual/)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Graph Neural Networks](https://pytorch-geometric.readthedocs.io/)
-
-## 📄 Deliverables Status
-
-| Deliverable | Status | Due |
-|-------------|--------|-----|
-| D1: Problem Brief | 📝 | May 31 |
-| D2: Demo Video | 🎬 | May 31 |
-| D3: Architecture | 📊 | May 31 |
-| D4: GitHub Repo | ✅ | May 31 |
-| D5: Pitch + Video | 🎥 | May 31 |
-
-**Submission Deadline: May 31, 2026, 11:59 PM IST**
+API continues in SQLite demo mode without Neo4j.
 
 ---
 
-**Tech Stack:** Python • FastAPI • Neo4j • PyTorch Geometric • Claude API • React+Vite+TailwindCSS
+## Deployment (D2 live URL)
 
-**Built for:** iDEA 2.0 Hackathon (Union Bank India) - Problem Statement 1: AI Early Warning System
-*Note: This will load ~10,200 relationships and 400 account nodes into your local graph.*
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Render, Docker, and Vercel instructions.
 
-### 5. Start the Services
+Quick Docker test:
 
-**Backend API:**
-Start the FastAPI server:
 ```bash
-python -m uvicorn backend.api.main:app --reload --port 8000
-```
-
-**Kafka Real-Time Ingestion (Optional):**
-Open a new terminal to simulate live incoming transactions hitting the graph:
-```bash
-python -m backend.ingestion.kafka_producer
-```
-
-**Frontend UI:**
-```bash
-npm install
-npm run dev
+docker build -t fundlens .
+docker run --rm -p 8000:8000 -e GEMINI_API_KEY=your_key fundlens
+# → http://localhost:8000 (UI + API)
 ```
 
 ---
 
-## Running in Demo Mode (Offline)
-If you don't want to spin up the Docker infrastructure, FundLens automatically falls back to **"Demo Mode."**
-In Demo Mode:
-- Queries will return static, hardcoded mock data.
-- The AI will still generate Cypher but gracefully bypass Neo4j execution.
-- STR generation will use templates if the Gemini API is unreachable.
+## Optional: Kafka ingestion
+
+```bash
+python3 -m backend.ingestion.kafka_producer   # simulate live transactions
+python3 -m backend.ingestion.alert_pipeline   # GNN scoring (requires requirements-ml.txt)
+```
+
+---
+
+## Tech stack
+
+Python · FastAPI · Neo4j · SQLite · Google Gemini · React · Vite · Tailwind CSS · PyTorch Geometric (optional)
+
+**Submission deadline:** May 31, 2026, 11:59 PM IST

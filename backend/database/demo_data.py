@@ -10,7 +10,9 @@ try:
 except ImportError:
     get_dict_db = None  # type: ignore
 
-DEMO_DB_PATH = Path(__file__).resolve().parents[2] / "fundlens_demo.db"
+from backend.paths import demo_db_path
+
+DEMO_DB_PATH = demo_db_path()
 
 logger = logging.getLogger(__name__)
 

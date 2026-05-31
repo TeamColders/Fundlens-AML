@@ -66,8 +66,10 @@ _MODE = os.getenv("FUNDLENS_BLOCKCHAIN_MODE", "demo").lower()
 DEMO_MODE       = _MODE == "demo"
 PRODUCTION_MODE = _MODE == "production"
 
+from backend.paths import evidence_db_path
+
 # ── DB path (overridable via env) ─────────────────────────────────
-DB_PATH = Path(os.getenv("FUNDLENS_EVIDENCE_DB", "fundlens_evidence.db"))
+DB_PATH = evidence_db_path()
 
 # ── Event type constants ──────────────────────────────────────────
 ALERT_CREATED           = "ALERT_CREATED"
