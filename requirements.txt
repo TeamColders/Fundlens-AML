@@ -2,7 +2,8 @@ fastapi==0.115.0
 uvicorn[standard]==0.32.0
 python-dotenv==1.0.1
 neo4j==5.25.0
-psycopg2-binary==2.9.10
+psycopg[binary]==3.2.4
+psycopg-pool==3.2.4
 redis==5.2.0
 kafka-python==2.0.2
 requests==2.32.3
