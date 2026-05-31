@@ -1,8 +1,23 @@
 import { ArrowUp, Activity, AlertTriangle, FileCheck, FolderOpen, RefreshCw, CheckCircle } from 'lucide-react';
 import { useNavigate } from 'react-router';
+import { useEffect, useState } from 'react';
+import { api } from '../../services/api';
+
+interface HealthStatus {
+  neo4j: boolean;
+  postgres: boolean;
+  redis: boolean;
+}
 
 export default function AnalyticsDashboard() {
   const navigate = useNavigate();
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+
+  useEffect(() => {
+    api.getHealth()
+      .then(data => setHealth(data.status))
+      .catch(() => {});
+  }, []);
 
   const typologyData = [
     { label: 'Round-trip Layering', value: 47, color: '#EF4444' },
@@ -238,31 +253,29 @@ export default function AnalyticsDashboard() {
                 System health
               </h3>
               <div className="space-y-3">
+                {[
+                  { key: 'neo4j'    as const, label: 'Neo4j graph',      detail: '12.4M nodes · 89ms avg query' },
+                  { key: 'postgres' as const, label: 'PostgreSQL',        detail: 'Cases & alerts store' },
+                  { key: 'redis'    as const, label: 'Redis / pub-sub',   detail: 'Real-time alerts channel' },
+                ].map(({ key, label, detail }) => {
+                  const up = health ? health[key] : null;
+                  return (
+                    <div key={key} className="flex items-start gap-2">
+                      <div className={`w-2 h-2 rounded-full mt-1 ${up === null ? 'bg-gray-300' : up ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <div className="flex-1">
+                        <div className="text-gray-900 text-xs mb-1">{label}</div>
+                        <div className="text-gray-600 text-[10px]" style={{ fontFamily: 'DM Mono' }}>
+                          {up === null ? 'Checking…' : up ? detail : 'Unreachable'}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
                 <div className="flex items-start gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500 mt-1" />
+                  <div className="w-2 h-2 rounded-full mt-1 bg-green-500" />
                   <div className="flex-1">
                     <div className="text-gray-900 text-xs mb-1">Kafka ingestion</div>
-                    <div className="text-gray-600 text-[10px]" style={{ fontFamily: 'DM Mono' }}>
-                      Normal · 42k events/min
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500 mt-1" />
-                  <div className="flex-1">
-                    <div className="text-gray-900 text-xs mb-1">Neo4j graph</div>
-                    <div className="text-gray-600 text-[10px]" style={{ fontFamily: 'DM Mono' }}>
-                      12.4M nodes · 89ms avg query
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500 mt-1" />
-                  <div className="flex-1">
-                    <div className="text-gray-900 text-xs mb-1">GNN model</div>
-                    <div className="text-gray-600 text-[10px]" style={{ fontFamily: 'DM Mono' }}>
-                      v2.4 · Last retrained: Sunday
-                    </div>
+                    <div className="text-gray-600 text-[10px]" style={{ fontFamily: 'DM Mono' }}>Normal · 42k events/min</div>
                   </div>
                 </div>
               </div>

@@ -101,7 +101,14 @@ export interface STREvent {
   stage: 'analysing_pattern' | 'compiling_evidence' | 'drafting_narrative' | 'complete';
   message: string;
   progress: number;
-  report?: string;
+  report?: string | {
+    case_id?: string;
+    summary?: string;
+    english_narrative?: string;
+    risk_rating?: string;
+    recommended_action?: string;
+    generation_time_seconds?: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
