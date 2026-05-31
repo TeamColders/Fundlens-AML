@@ -1,200 +1,192 @@
 """
 FundLens — /api/str endpoints with Server-Sent Events streaming.
-
-POST /api/str/{case_id}/generate  — Stream STR generation progress via SSE
-GET  /api/str/{case_id}           — Return previously generated STR
-POST /api/str/{case_id}/submit    — Submit STR to FIU-IND
 """
 import asyncio
 import json
 import logging
 import uuid
 from datetime import datetime
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 
 from backend.api.models import STRStage, STRSubmitRequest, STRSubmitResponse
+from backend.blockchain.bootstrap import ensure_case_chain
 from backend.blockchain.evidence_chain import (
-    LLM_NARRATIVE_GENERATED, STR_SUBMITTED, SUBGRAPH_EXPORTED, write_block,
+    LLM_NARRATIVE_GENERATED,
+    STR_SUBMITTED,
+    SUBGRAPH_EXPORTED,
+    INVESTIGATOR_ACTION,
+    has_event,
+    write_block,
 )
 from backend.database.demo_data import get_case_data
+from backend.database.str_store import init_str_tables, load_report, save_draft, save_generated_report
+from backend.llm.str_pdf import build_str_pdf
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/str", tags=["STR Generation"])
 
-# In-memory store of generated STRs keyed by case_id
-_str_store: dict = {}
+_str_store: dict[str, dict[str, Any]] = {}
+_str_generation_locks: dict[str, asyncio.Lock] = {}
+
+
+class STRDraftBody(BaseModel):
+    full_report_text: str
+    english_narrative: str | None = None
+    hindi_narrative: str | None = None
+    recommended_action: str | None = None
+    regulatory_basis: str | None = None
+    investigator_id: str = "investigator"
 
 
 def _sse_event(data: dict) -> str:
     return f"data: {json.dumps(data, default=str)}\n\n"
 
+
 def _sse_keep_alive() -> str:
     return ": keep-alive\n\n"
 
 
+def _report_to_dict(report: Any) -> dict[str, Any]:
+    if isinstance(report, dict):
+        return report
+    if hasattr(report, "model_dump"):
+        return report.model_dump(mode="json")
+    return dict(report)
+
+
+def _get_report(case_id: str) -> dict[str, Any] | None:
+    if case_id in _str_store:
+        return _str_store[case_id]
+    return load_report(case_id)
+
+
 async def _str_generation_stream(case_id: str) -> AsyncGenerator[str, None]:
-    """Core async generator yielding SSE events for the STR pipeline."""
     try:
-        # Event 1: Analysing pattern
         yield _sse_event({
             "stage": STRStage.ANALYSING_PATTERN,
-            "message": "Extracting subgraph from Neo4j...",
+            "message": f"Loading case {case_id} and transaction graph...",
             "progress": 20,
         })
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(0.5)
+
+        ensure_case_chain(case_id)
 
         case_data = get_case_data(case_id)
         if not case_data:
-            case_data = {
-                "case_id": case_id, "typology_name": "Suspicious Fund Flow",
-                "typology_fatf_reference": "FATF Typology 6",
-                "total_amount": 1000000, "accounts_count": 3,
-                "hop_count": 2, "duration_hours": 4.0,
-                "gnn_score": 0.78, "channel": "NEFT",
-                "timeline": [], "subgraph": {"nodes": []},
-            }
+            yield _sse_event({
+                "stage": STRStage.ERROR,
+                "message": f"Case {case_id} not found",
+                "progress": 0,
+                "error": f"Case {case_id} not found",
+            })
+            return
 
-        # Write blockchain block
-        try:
-            write_block(
-                case_id=case_id, event_type=SUBGRAPH_EXPORTED,
-                payload={"case_id": case_id, "node_count": case_data.get("accounts_count", 0)},
-                actor_id="system",
-            )
-        except Exception:
-            pass
+        if not has_event(case_id, SUBGRAPH_EXPORTED):
+            try:
+                write_block(
+                    case_id=case_id,
+                    event_type=SUBGRAPH_EXPORTED,
+                    payload={"case_id": case_id, "node_count": case_data.get("accounts_count", 0)},
+                    actor_id="system",
+                )
+            except Exception:
+                pass
 
-        # Event 2: Compiling evidence
         yield _sse_event({
             "stage": STRStage.COMPILING_EVIDENCE,
-            "message": "Assembling case evidence and regulatory references...",
+            "message": "Compiling timeline, account roles, and regulatory references...",
             "progress": 50,
         })
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(0.4)
 
-        # Event 3: Drafting narrative
         yield _sse_event({
             "stage": STRStage.DRAFTING_NARRATIVE,
-            "message": "LLM drafting STR narrative...",
+            "message": "Gemini drafting personalised STR narrative for this case...",
             "progress": 75,
         })
 
-        # Try LLM generation
-        try:
-            from backend.llm.str_generator import generate_str
-            llm_task = asyncio.create_task(generate_str(case_data))
+        from backend.llm.str_generator import generate_str
 
-            keep_alive_interval = 5
-            while not llm_task.done():
-                await asyncio.sleep(keep_alive_interval)
-                yield _sse_keep_alive()
+        llm_task = asyncio.create_task(generate_str(case_data))
+        while not llm_task.done():
+            await asyncio.sleep(4)
+            yield _sse_keep_alive()
 
-            str_report = await llm_task
-        except Exception as e:
-            logger.warning(f"LLM unavailable, using fallback: {e}")
-            # Generate fallback report
-            str_report = _generate_fallback_str(case_data)
+        str_report = await llm_task
+        str_report = _report_to_dict(str_report)
 
-        # Write blockchain block
-        try:
-            import hashlib
-            write_block(
-                case_id=case_id, event_type=LLM_NARRATIVE_GENERATED,
-                payload={
-                    "case_id": case_id,
-                    "model_used": str_report.get("model_used", "fallback"),
-                    "word_count": str_report.get("word_count", 0),
-                },
-                actor_id="system",
+        if str_report.get("model_used") != "fallback-template" and not has_event(
+            case_id, LLM_NARRATIVE_GENERATED
+        ):
+            try:
+                write_block(
+                    case_id=case_id,
+                    event_type=LLM_NARRATIVE_GENERATED,
+                    payload={
+                        "case_id": case_id,
+                        "model_used": str_report.get("model_used", "unknown"),
+                        "word_count": str_report.get("word_count", 0),
+                    },
+                    actor_id="system",
+                )
+            except Exception:
+                pass
+        else:
+            logger.warning(
+                "STR for %s used fallback template (%s); skipping LLM_NARRATIVE_GENERATED block",
+                case_id,
+                str_report.get("fallback_reason", "unknown"),
             )
-        except Exception:
-            pass
 
         _str_store[case_id] = str_report
+        save_generated_report(case_id, str_report)
 
-        # Event 4: Complete
         yield _sse_event({
             "stage": STRStage.COMPLETE,
             "message": "STR ready for review",
             "progress": 100,
-            "report": str_report if isinstance(str_report, dict) else str_report.__dict__ if hasattr(str_report, '__dict__') else {"text": str(str_report)},
+            "report": str_report,
         })
-
     except Exception as e:
-        logger.exception(f"STR generation failed for {case_id}: {e}")
+        logger.exception("STR generation failed for %s", case_id)
         yield _sse_event({
             "stage": STRStage.ERROR,
-            "message": f"Generation failed: {str(e)}",
-            "progress": 0, "error": str(e),
+            "message": str(e),
+            "progress": 0,
+            "error": str(e),
         })
 
 
-def _generate_fallback_str(case_data: dict) -> dict:
-    """Template-based fallback when LLM is unavailable."""
-    from datetime import date
-    today = date.today().strftime("%d %b %Y")
-    case_id = case_data.get("case_id", "UNKNOWN")
-    typology = case_data.get("typology_name", "Suspicious Pattern")
-    amount = case_data.get("total_amount", 0)
-    score = round(case_data.get("gnn_score", 0) * 100, 1)
-    accounts = case_data.get("accounts_count", 0)
-    hops = case_data.get("hop_count", 0)
-    duration = case_data.get("duration_hours", 0)
-
-    narrative = (
-        f"FundLens detected a {typology.lower()} pattern with a GNN confidence score of {score}%. "
-        f"The pattern involved {accounts} accounts with a total fund flow of ₹{amount:,.0f} "
-        f"over {duration:.1f} hours across {hops} transaction hops. "
-        f"The structural indicators — including rapid velocity, multiple intermediary layers, "
-        f"and the activation of previously dormant accounts — are consistent with known "
-        f"{case_data.get('typology_fatf_reference', 'FATF')} patterns. "
-        f"This report requires investigator review before submission."
-    )
-
-    full_text = f"""FIU-IND FORM STR-01 (DRAFT)
-Report Date: {today}
-Filing Entity: Union Bank of India
-
-CASE REF: {case_id}
-TYPOLOGY: {typology}
-RISK SCORE: {score}% (GNN confidence)
-ACCOUNTS INVOLVED: {accounts}
-TOTAL AMOUNT: ₹{amount:,.0f}
-PERIOD: {duration:.1f} hours
-
-NARRATIVE:
-{narrative}
-
-RECOMMENDED ACTION:
-Freeze implicated accounts pending investigation. Immediate escalation to law enforcement recommended given the high confidence score ({score}%) and rapid transaction velocity.
-
-REGULATORY BASIS:
-PMLA 2002, Section 12 and Section 16 | {case_data.get("typology_fatf_reference", "FATF Typology")} | RBI Master Circular DBR.AML.BC.No.10/14.01.001/2015-16"""
-
-    return {
-        "case_id": case_id,
-        "english_narrative": narrative,
-        "hindi_narrative": "[मैन्युअल समीक्षा आवश्यक — AI अनुवाद अनुपलब्ध]",
-        "recommended_action": f"Freeze implicated accounts pending investigation. Escalation recommended ({score}% confidence).",
-        "regulatory_basis": f"PMLA 2002, Section 12 and Section 16 | {case_data.get('typology_fatf_reference', 'FATF Typology')}",
-        "full_report_text": full_text,
-        "generated_at": datetime.utcnow().isoformat(),
-        "model_used": "fallback-template",
-        "generation_time_s": 1.2,
-        "word_count": len(full_text.split()),
-        "page_estimate": max(1, len(full_text.split()) // 300),
-    }
+async def _stream_with_lock(case_id: str) -> AsyncGenerator[str, None]:
+    lock = _str_generation_locks.setdefault(case_id, asyncio.Lock())
+    if lock.locked():
+        cached = _get_report(case_id)
+        if cached:
+            logger.info("STR already running for %s — returning cached report", case_id)
+            yield _sse_event({
+                "stage": STRStage.COMPLETE,
+                "message": "STR ready (cached — generation already in progress)",
+                "progress": 100,
+                "report": cached,
+            })
+            return
+        logger.info("STR already in progress for %s — waiting for lock", case_id)
+    async with lock:
+        async for chunk in _str_generation_stream(case_id):
+            yield chunk
 
 
 @router.post("/{case_id}/generate")
 async def generate_str_endpoint(case_id: str):
     """Stream STR generation progress via Server-Sent Events."""
-    logger.info(f"STR generation requested for {case_id}")
+    init_str_tables()
+    logger.info("STR generation requested for %s", case_id)
     return StreamingResponse(
-        _str_generation_stream(case_id),
+        _stream_with_lock(case_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -206,16 +198,86 @@ async def generate_str_endpoint(case_id: str):
 
 @router.get("/{case_id}")
 async def get_str(case_id: str):
-    """Return a previously generated STR."""
-    if case_id not in _str_store:
+    report = _get_report(case_id)
+    if not report:
         raise HTTPException(status_code=404, detail=f"No STR found for case {case_id}")
-    return _str_store[case_id]
+    return report
+
+
+@router.post("/{case_id}/draft")
+async def save_str_draft(case_id: str, body: STRDraftBody):
+    existing = _get_report(case_id) or {"case_id": case_id}
+    merged = {
+        **existing,
+        "case_id": case_id,
+        "full_report_text": body.full_report_text,
+        "english_narrative": body.english_narrative or existing.get("english_narrative", ""),
+        "hindi_narrative": body.hindi_narrative or existing.get("hindi_narrative", ""),
+        "recommended_action": body.recommended_action or existing.get("recommended_action", ""),
+        "regulatory_basis": body.regulatory_basis or existing.get("regulatory_basis", ""),
+        "updated_at": datetime.utcnow().isoformat(),
+        "is_draft": True,
+    }
+    _str_store[case_id] = merged
+    save_draft(case_id, merged, body.investigator_id)
+    try:
+        ensure_case_chain(case_id, investigator_id=body.investigator_id)
+        write_block(
+            case_id=case_id,
+            event_type=INVESTIGATOR_ACTION,
+            payload={
+                "case_id": case_id,
+                "word_count": len(body.full_report_text.split()),
+                "action": "STR draft saved",
+            },
+            actor_id=body.investigator_id,
+            metadata={"details": "STR draft saved by investigator · edits hash-sealed"},
+        )
+    except Exception:
+        pass
+    return {"success": True, "case_id": case_id, "saved_at": merged["updated_at"]}
+
+
+@router.get("/{case_id}/draft")
+async def get_str_draft(case_id: str):
+    report = load_report(case_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"No draft for case {case_id}")
+    return report
+
+
+@router.get("/{case_id}/pdf")
+async def download_str_pdf(case_id: str):
+    report = _get_report(case_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"No STR found for case {case_id}")
+    pdf_bytes = build_str_pdf(report)
+    filename = f"STR-{case_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{case_id}/download")
+async def download_str_text(case_id: str):
+    report = _get_report(case_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"No STR found for case {case_id}")
+    text = report.get("full_report_text", "")
+    filename = f"STR-{case_id}.txt"
+    return Response(
+        content=text.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{case_id}/submit")
 async def submit_str(case_id: str, body: STRSubmitRequest):
-    """Submit a reviewed STR to FIU-IND."""
-    if case_id not in _str_store:
+    report = _get_report(case_id)
+    if not report:
         raise HTTPException(status_code=404, detail=f"No STR found for case {case_id}")
 
     submission_id = f"SUB-{uuid.uuid4().hex[:8].upper()}"
@@ -223,8 +285,13 @@ async def submit_str(case_id: str, body: STRSubmitRequest):
 
     try:
         block = write_block(
-            case_id=case_id, event_type=STR_SUBMITTED,
-            payload={"case_id": case_id, "submission_id": submission_id, "fiu_reference": fiu_reference},
+            case_id=case_id,
+            event_type=STR_SUBMITTED,
+            payload={
+                "case_id": case_id,
+                "submission_id": submission_id,
+                "fiu_reference": fiu_reference,
+            },
             actor_id=body.investigator_id,
             metadata={"notes": body.notes},
         )
@@ -233,7 +300,9 @@ async def submit_str(case_id: str, body: STRSubmitRequest):
         blockchain_block = None
 
     return STRSubmitResponse(
-        success=True, submission_id=submission_id,
-        fiu_reference=fiu_reference, blockchain_block=blockchain_block,
+        success=True,
+        submission_id=submission_id,
+        fiu_reference=fiu_reference,
+        blockchain_block=blockchain_block,
         submitted_at=datetime.utcnow(),
     )

@@ -1,59 +1,87 @@
-import { Link2, FileDown, ExternalLink, ChevronDown, Loader2 } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { ChevronDown, FileDown, Link2, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
+import { approveStrEvidence, exportBlockchainEvidence } from '../../api/client';
+import type { BlockRecord } from '../../api/types';
 import { useBlockchain } from '../../hooks/useBlockchain';
+import { useAlertDetail } from '../../hooks/useAlerts';
+import { useSelectedCaseId } from '../../hooks/useSelectedCaseId';
+import { usePersistCaseContext } from '../../hooks/useCaseContext';
+import { pathWithCase } from '../../lib/selectedCase';
+import { useNavigate } from 'react-router';
+
+function integrityBanner(
+  verification: { valid?: boolean; empty?: boolean; integrity_label?: string } | null,
+  chainEmpty: boolean,
+) {
+  if (chainEmpty || verification?.empty) {
+    return { label: 'NO CHAIN', tone: 'amber' as const, sub: 'No evidence blocks sealed yet' };
+  }
+  if (verification?.valid === false || verification?.integrity_label === 'COMPROMISED') {
+    return { label: 'COMPROMISED', tone: 'red' as const, sub: 'Hash linkage check failed' };
+  }
+  return { label: 'VERIFIED', tone: 'green' as const, sub: 'SHA-256 chain intact' };
+}
 
 export default function BlockchainAudit() {
+  const navigate = useNavigate();
   const [expandedBlock, setExpandedBlock] = useState<number | null>(null);
-  const { chain, verification, loading } = useBlockchain('CASE-2847');
+  const [exporting, setExporting] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const { caseId } = useSelectedCaseId();
+  const { detail } = useAlertDetail(caseId || null);
+  usePersistCaseContext(caseId || null, detail);
+  const { chain, verification, loading, error, refetch } = useBlockchain(caseId || null);
 
-  const blocks = [
-    {
-      number: 48291,
-      timestamp: '14:23:07',
-      hash: '0x3a8f...2c19',
-      event: 'Initial alert created',
-      details: 'Alert CASE-2847 generated · Typology: Round-trip Layering · GNN Score: 0.94',
-    },
-    {
-      number: 48292,
-      timestamp: '14:24:15',
-      hash: '0x7b2e...8d4a',
-      event: 'Investigator opened case',
-      details: 'Investigator RK (Rohan Kumar) opened case · Access logged with biometric auth',
-    },
-    {
-      number: 48293,
-      timestamp: '14:25:42',
-      hash: '0x9c1d...3f7b',
-      event: 'Subgraph exported',
-      details: 'Subgraph exported for STR compilation · 7 nodes, 12 edges · Hash: 0xab3c...9d2e',
-    },
-    {
-      number: 48294,
-      timestamp: '14:26:18',
-      hash: '0x4e8a...6b5c',
-      event: 'LLM narrative generated',
-      details: 'LLM narrative generated · Input/output hash recorded · Model: GPT-4o',
-    },
-    {
-      number: 48295,
-      timestamp: '14:27:33',
-      hash: '0x2f9b...1a8d',
-      event: 'STR draft reviewed',
-      details: 'STR draft reviewed by supervisor (Anjali Kapoor) · Approval logged',
-    },
-    {
-      number: 48296,
-      timestamp: '14:27:54',
-      hash: '0x5d3c...4e2f',
-      event: 'STR submitted to FIU-IND',
-      details: 'STR submitted to FIU-IND · Submission hash: 0x8f7a...3b9c · FIU acknowledgement recorded',
-    },
-  ];
+  const blocks: BlockRecord[] = chain?.blocks ?? [];
+  const chainEmpty = blocks.length === 0;
+  const banner = integrityBanner(verification, chainEmpty);
+  const modeLabel = chain?.mode === 'PRODUCTION' ? 'Hyperledger Fabric' : 'FundLens demo ledger (SHA-256)';
 
-  const displayBlocks = chain?.blocks || blocks;
+  const handleExport = async () => {
+    if (!caseId) return;
+    setExporting(true);
+    try {
+      const blob = await exportBlockchainEvidence(caseId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `evidence-audit-${caseId}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
-  if (loading) {
+  const handleVerify = () => refetch();
+
+  const handleApprove = async () => {
+    if (!caseId) return;
+    setApproving(true);
+    try {
+      await approveStrEvidence(caseId, { actor_id: 'supervisor', notes: 'STR draft approved via audit trail' });
+      await refetch();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  if (!caseId) {
+    return (
+      <div className="min-h-screen bg-white p-8">
+        <h1 className="text-gray-900 text-3xl font-bold mb-2" style={{ fontFamily: 'Syne' }}>
+          Evidence audit trail
+        </h1>
+        <p className="text-gray-600 text-sm">Select a case from the investigation dashboard to view its evidence chain.</p>
+      </div>
+    );
+  }
+
+  if (loading && !chain) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-[#E31E24]" />
@@ -63,198 +91,210 @@ export default function BlockchainAudit() {
 
   return (
     <div className="min-h-screen bg-white p-8">
-      {/* Page Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
         <div>
           <h1 className="text-gray-900 text-3xl font-bold mb-2" style={{ fontFamily: 'Syne' }}>
             Evidence audit trail
           </h1>
           <p className="text-gray-700 text-sm">
-            Case CASE-2847 · Round-trip Layering
+            Case <span style={{ fontFamily: 'DM Mono' }}>{caseId}</span>
+            {detail?.typology ? ` · ${detail.typology}` : ''}
+            {chain?.risk_level ? ` · ${chain.risk_level} risk` : ''}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button className="px-4 py-2 border border-gray-700 text-gray-700 hover:bg-gray-100 transition-colors rounded text-sm flex items-center gap-2">
-            <FileDown className="w-4 h-4" />
-            Export PDF
-          </button>
-          <button className="px-4 py-2 bg-[#E31E24] text-white hover:bg-[#d4183d] transition-colors rounded text-sm font-bold flex items-center gap-2"
-            style={{ fontFamily: 'Syne' }}
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-50 rounded text-sm flex items-center gap-2"
           >
-            Verify on-chain ↗
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || chainEmpty}
+            className="px-4 py-2 border border-gray-700 text-gray-700 hover:bg-gray-100 disabled:opacity-50 rounded text-sm flex items-center gap-2"
+          >
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+            Export JSON
+          </button>
+          <button
+            type="button"
+            onClick={handleVerify}
+            className="px-4 py-2 border border-[#E31E24] text-[#E31E24] hover:bg-red-50 rounded text-sm flex items-center gap-2"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Re-verify chain
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(pathWithCase('/str-generation', caseId))}
+            className="px-4 py-2 bg-gray-900 text-white rounded text-sm"
+          >
+            Open STR
           </button>
         </div>
       </div>
 
-      {/* Integrity Banner */}
-      <div className="bg-white border-l-4 border-[#E31E24] rounded-lg p-6 mb-8 flex items-center justify-between">
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">{error}</div>
+      )}
+
+      <div className="bg-white border-l-4 border-[#E31E24] rounded-lg p-6 mb-8 flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
           <Link2 className="w-8 h-8 text-[#E31E24]" />
           <div>
             <div className="text-gray-900 font-semibold mb-1" style={{ fontFamily: 'Syne' }}>
-              All evidence cryptographically sealed on Hyperledger Fabric
+              Evidence cryptographically sealed · {modeLabel}
             </div>
             <div className="text-gray-700 text-sm" style={{ fontFamily: 'DM Mono' }}>
-              6 blocks · First sealed: 14:23:07 · Last updated: 14:27:54 · Network: UBI-Fabric-Private
+              {blocks.length} block{blocks.length === 1 ? '' : 's'}
+              {chain?.network ? ` · Network: ${chain.network}` : ''}
             </div>
+            <div className="text-gray-500 text-xs mt-1">{banner.sub}</div>
           </div>
         </div>
-        <div className="px-6 py-3 bg-green-500 text-white rounded-lg border-2 border-green-500">
-          <span className="text-green-500 text-white text-xl font-bold" style={{ fontFamily: 'Syne' }}>
-            VERIFIED
+        <div
+          className={`px-6 py-3 rounded-lg border-2 ${
+            banner.tone === 'green'
+              ? 'bg-green-500 border-green-500 text-white'
+              : banner.tone === 'red'
+                ? 'bg-red-500 border-red-500 text-white'
+                : 'bg-amber-100 border-amber-400 text-amber-900'
+          }`}
+        >
+          <span className="text-xl font-bold" style={{ fontFamily: 'Syne' }}>
+            {banner.label}
           </span>
         </div>
       </div>
 
-      {/* Blockchain Blocks Timeline */}
-      <div className="max-w-4xl mx-auto">
-        <div className="relative">
-          {/* Vertical connector line */}
-          <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-[#E31E24] opacity-30" />
-
-          <div className="space-y-4">
-            {displayBlocks.map((block: any, idx: number) => (
-              <div key={idx} className="relative">
-                {/* Connector circles */}
-                <div className="absolute left-8 top-6 w-3 h-3 rounded-full bg-[#E31E24] border-2 border-white transform -translate-x-1/2 z-10" />
-
-                {/* Block card */}
-                <div className="ml-16 bg-white border border-gray-200 rounded-lg p-5">
-                  {/* Top row */}
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-[#E31E24] font-bold" style={{ fontFamily: 'DM Mono' }}>
-                        Block #{block.block_id || block.number}
-                      </span>
-                      <span className={`px-2 py-1 ${block.verified !== false ? 'bg-green-500' : 'bg-red-500'} text-white rounded text-xs font-semibold`}>
-                        {block.verified !== false ? 'Verified' : 'Tampered'}
-                      </span>
-                    </div>
-                    <span className="text-gray-700 text-xs" style={{ fontFamily: 'DM Mono' }}>
-                      {block.timestamp}
-                    </span>
-                  </div>
-
-                  {/* Block hash */}
-                  <div className="text-gray-700 text-xs mb-3" style={{ fontFamily: 'DM Mono' }}>
-                    {block.block_hash || block.hash}
-                  </div>
-
-                  {/* Event description */}
-                  <div className="text-gray-900 font-semibold mb-1">
-                    {block.event_label || block.event}
-                  </div>
-                  <div className="text-gray-700 text-sm">
-                    {block.details || `Payload hash: ${block.payload_hash}`}
+      {chainEmpty ? (
+        <div className="max-w-2xl mx-auto text-center py-16 border border-dashed border-gray-300 rounded-xl">
+          <p className="text-gray-700 mb-4">No blocks found. Opening case detail or generating an STR will seal evidence.</p>
+          <button type="button" onClick={() => refetch()} className="text-[#E31E24] hover:underline text-sm">
+            Initialize trail
+          </button>
+        </div>
+      ) : (
+        <div className="max-w-4xl mx-auto">
+          <div className="relative">
+            <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-[#E31E24] opacity-30" />
+            <div className="space-y-4">
+              {blocks.map((block) => (
+                <div key={block.block_id} className="relative">
+                  <div className="absolute left-8 top-6 w-3 h-3 rounded-full bg-[#E31E24] border-2 border-white transform -translate-x-1/2 z-10" />
+                  <div className="ml-16 bg-white border border-gray-200 rounded-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedBlock(expandedBlock === block.block_id ? null : block.block_id)
+                      }
+                      className="w-full p-5 text-left hover:bg-gray-50"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="text-[#E31E24] font-bold" style={{ fontFamily: 'DM Mono' }}>
+                            Block #{block.block_id}
+                          </span>
+                          <span
+                            className={`px-2 py-1 text-white rounded text-xs font-semibold ${
+                              block.verified !== false ? 'bg-green-500' : 'bg-red-500'
+                            }`}
+                          >
+                            {block.verified !== false ? 'Verified' : 'Tampered'}
+                          </span>
+                          <span className="text-xs text-gray-500">{block.event_type}</span>
+                        </div>
+                        <span className="text-gray-700 text-xs" style={{ fontFamily: 'DM Mono' }}>
+                          {block.display_timestamp || block.timestamp}
+                        </span>
+                      </div>
+                      <div className="text-gray-900 font-semibold mb-1">{block.event_label}</div>
+                      <div className="text-gray-700 text-sm">{block.details}</div>
+                      <div className="text-gray-500 text-xs mt-2" style={{ fontFamily: 'DM Mono' }}>
+                        {block.short_hash} · actor: {block.actor_id || 'system'}
+                      </div>
+                    </button>
+                    {expandedBlock === block.block_id && (
+                      <div className="px-5 pb-5 border-t border-gray-100 bg-gray-50 text-xs space-y-3" style={{ fontFamily: 'DM Mono' }}>
+                        <div>
+                          <div className="text-gray-600 mb-1">Block hash</div>
+                          <div className="text-[#E31E24] break-all">{block.block_hash}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-600 mb-1">Previous hash</div>
+                          <div className="break-all">{block.prev_hash}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-600 mb-1">Payload hash (SHA-256)</div>
+                          <div className="break-all">{block.payload_hash}</div>
+                        </div>
+                        {block.payload_preview && (
+                          <div>
+                            <div className="text-gray-600 mb-1">Payload preview</div>
+                            <pre className="bg-white border border-gray-200 rounded p-2 overflow-x-auto text-[11px]">
+                              {JSON.stringify(block.payload_preview, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Verification Section */}
-      <div className="max-w-4xl mx-auto mt-8">
+      <div className="max-w-4xl mx-auto mt-8 grid gap-4 md:grid-cols-2">
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <h3 className="text-gray-900 font-semibold mb-3" style={{ fontFamily: 'Syne' }}>
+            Supervisor approval
+          </h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Record STR draft review on the evidence chain before FIU submission.
+          </p>
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={approving || chainEmpty}
+            className="px-4 py-2 bg-[#E31E24] text-white rounded text-sm font-semibold disabled:opacity-50 flex items-center gap-2"
+          >
+            {approving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            Record supervisor approval
+          </button>
+        </div>
+
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
           <button
-            onClick={() => setExpandedBlock(expandedBlock === 0 ? null : 0)}
-            className="w-full p-5 flex items-center justify-between hover:bg-gray-50 transition-colors"
+            type="button"
+            onClick={() => setExpandedBlock(expandedBlock === -1 ? null : -1)}
+            className="w-full p-5 flex items-center justify-between hover:bg-gray-50"
           >
             <span className="text-gray-900 font-semibold" style={{ fontFamily: 'Syne' }}>
-              Verify independently
+              Independent verification
             </span>
-            <ChevronDown
-              className={`w-5 h-5 text-gray-700 transition-transform ${
-                expandedBlock === 0 ? 'rotate-180' : ''
-              }`}
-            />
+            <ChevronDown className={`w-5 h-5 ${expandedBlock === -1 ? 'rotate-180' : ''}`} />
           </button>
-          {expandedBlock === 0 && (
-            <div className="px-5 pb-5 border-t border-gray-200">
-              <div className="pt-4 space-y-4">
-                <div>
-                  <div className="text-xs text-gray-700 mb-2">Block hash:</div>
-                  <div className="bg-gray-50 border border-gray-200 rounded p-3 text-[#E31E24] text-sm break-all" style={{ fontFamily: 'DM Mono' }}>
-                    {displayBlocks[0]?.block_hash || '0x3a8f7b2e9c1d4e8a2f9b5d3c8f7a6b5c4e2f1a8d3b9c7e6a5f4d2c1b8a9e7f3a'}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-gray-700 mb-2">Verification command:</div>
-                  <div className="bg-gray-50 border border-gray-200 rounded p-3 text-gray-900 text-xs" style={{ fontFamily: 'DM Mono' }}>
-                    peer chainquery -c fundlens-audit -q "getBlock 48291" --tls --cafile /certs/ca.crt
-                  </div>
-                </div>
-                <div className="flex items-center gap-4 pt-2">
-                  <div className="flex-1">
-                    <div className="text-xs text-gray-700 mb-2">QR Code for mobile verification:</div>
-                    <div className="w-32 h-32 bg-white rounded flex items-center justify-center">
-                      <svg viewBox="0 0 100 100" className="w-full h-full">
-                        <rect x="0" y="0" width="100" height="100" fill="white" />
-                        {/* Simple QR code pattern */}
-                        {[...Array(10)].map((_, i) =>
-                          [...Array(10)].map((_, j) => (
-                            <rect
-                              key={`${i}-${j}`}
-                              x={i * 10}
-                              y={j * 10}
-                              width="10"
-                              height="10"
-                              fill={(i + j) % 2 === 0 ? 'black' : 'white'}
-                            />
-                          ))
-                        )}
-                      </svg>
-                    </div>
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-xs text-gray-700 italic">
-                      "Any authorised FIU/ED officer can independently verify this chain using the Fabric network certificate"
-                    </div>
-                  </div>
-                </div>
+          {expandedBlock === -1 && verification && (
+            <div className="px-5 pb-5 border-t border-gray-200 text-sm space-y-3">
+              <p>
+                Verified at: <span style={{ fontFamily: 'DM Mono' }}>{verification.verified_at}</span>
+              </p>
+              <p>Mode: {verification.mode}</p>
+              <p>Blocks checked: {verification.block_count}</p>
+              {verification.broken_at_block != null && (
+                <p className="text-red-600">Broken at block #{verification.broken_at_block}</p>
+              )}
+              <div className="bg-gray-50 border rounded p-3 text-xs" style={{ fontFamily: 'DM Mono' }}>
+                Recompute: block_hash = SHA-256(block_id | prev_hash | payload_hash | timestamp)
               </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Zero-Knowledge Proof Section */}
-      <div className="max-w-4xl mx-auto mt-4">
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="text-gray-900 font-semibold mb-4" style={{ fontFamily: 'Syne' }}>
-            Cross-bank intelligence sharing
-          </h3>
-          <div className="flex items-center gap-6">
-            <div className="flex-1">
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                <div className="text-sm text-gray-900 mb-2">
-                  Entity hash shared with 2 consortium banks
-                </div>
-                <div className="text-xs text-gray-700" style={{ fontFamily: 'DM Mono' }}>
-                  Zero knowledge — no transaction data disclosed
-                </div>
-                <div className="mt-3 text-[#E31E24] text-xs font-semibold" style={{ fontFamily: 'DM Mono' }}>
-                  Proof hash: 0x9f3e...7a2d
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-[#3B82F6] text-white flex items-center justify-center text-xs font-bold">
-                SBI
-              </div>
-              <div className="flex flex-col items-center gap-1">
-                <div className="w-8 h-8 rounded bg-[#E31E24] flex items-center justify-center">
-                  <div className="text-white text-xs font-bold">✓</div>
-                </div>
-                <div className="text-[10px] text-[#E31E24] font-semibold">ZKP</div>
-                <div className="text-[9px] text-gray-700">Privacy</div>
-              </div>
-              <div className="w-12 h-12 rounded-full bg-[#F59E0B] text-white flex items-center justify-center text-xs font-bold">
-                HDFC
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>

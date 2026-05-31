@@ -1,21 +1,22 @@
 import { useNavigate, useLocation } from 'react-router';
 import { LayoutDashboard, Activity, FileText, User, BarChart3, MessageSquare, Link2, Settings, Smartphone } from 'lucide-react';
+import { isNavRouteActive, resolveNavPath } from '../../lib/appNav';
+
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'graph', label: 'Graph View', icon: Activity },
+  { id: 'str', label: 'STR Generation', icon: FileText },
+  { id: 'entity', label: 'Entity Profile', icon: User },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { id: 'query', label: 'AI Query', icon: MessageSquare },
+  { id: 'blockchain', label: 'Audit Trail', icon: Link2 },
+  { id: 'admin', label: 'Configuration', icon: Settings },
+  { id: 'mobile', label: 'Mobile', icon: Smartphone },
+] as const;
 
 export default function TopNavbar() {
   const navigate = useNavigate();
   const location = useLocation();
-
-  const routes = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/graph', label: 'Graph View', icon: Activity },
-    { path: '/str-generation', label: 'STR Generation', icon: FileText },
-    { path: '/entity/ACC-0041', label: 'Entity Profile', icon: User },
-    { path: '/analytics', label: 'Analytics', icon: BarChart3 },
-    { path: '/query', label: 'AI Query', icon: MessageSquare },
-    { path: '/blockchain', label: 'Audit Trail', icon: Link2 },
-    { path: '/admin', label: 'Configuration', icon: Settings },
-    { path: '/mobile', label: 'Mobile', icon: Smartphone },
-  ];
 
   return (
     <div className="bg-white border-b border-gray-200 px-8 py-4 sticky top-0 z-40 shadow-sm">
@@ -25,13 +26,13 @@ export default function TopNavbar() {
             FundLens
           </h2>
           <div className="flex items-center gap-1">
-            {routes.map((route) => {
+            {NAV_ITEMS.map((route) => {
               const Icon = route.icon;
-              const isActive = location.pathname === route.path;
+              const isActive = isNavRouteActive(route.id, location.pathname);
               return (
                 <button
-                  key={route.path}
-                  onClick={() => navigate(route.path)}
+                  key={route.id}
+                  onClick={() => navigate(resolveNavPath(route.id))}
                   className={`flex items-center gap-2 px-3 py-2 rounded transition-all text-sm ${
                     isActive
                       ? 'bg-[#E31E24] text-white font-semibold'

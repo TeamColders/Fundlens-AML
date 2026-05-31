@@ -2,7 +2,7 @@
 
 **Building in 4 weeks. Submitting May 31, 2026 (iDEA 2.0 Round 2).**
 
-> FundLens is an Anti-Money Laundering (AML) system that uses Graph Neural Networks (GNN), Neo4j pattern matching, and Claude AI to detect and investigate financial fraud typologies in real-time. Built for Union Bank of India's AI Early Warning System problem statement.
+> FundLens is an Anti-Money Laundering (AML) system that uses Graph Neural Networks (GNN), Neo4j pattern matching, and **Google Gemini** to detect and investigate financial fraud typologies in real-time. Built for Union Bank of India's fund-flow / AML problem statement (iDEA 2.0).
 
 ## 📋 Problem Statement
 
@@ -17,10 +17,21 @@ Banks process millions of transactions daily, but manual AML reviews catch only 
 
 ### 1. Clone & Setup
 ```bash
-cd /home/nathanpimenta/Projects/Fundlens-AML
-python -m venv venv
+cd Fundlens-AML
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+# Optional GNN training (skip for demo if install fails on Python 3.13):
+# pip install -r requirements-ml.txt
+cp .env.example .env
+# Edit .env — set GEMINI_API_KEY from https://aistudio.google.com/apikey
+```
+
+### 1b. Laptop-only demo (no Docker)
+```bash
+./run_demo.sh
+python3 -m uvicorn backend.api.main:app --reload --port 8000
+npm run dev
 ```
 
 ### 2. Start Infrastructure
@@ -90,8 +101,12 @@ curl http://localhost:8000/api/alerts
 | GET | `/api/entities/{account_id}` | ✅ Entity profile |
 | GET | `/api/analytics` | ✅ Dashboard stats |
 | POST | `/api/score` | ✅ GNN scoring endpoint |
-| POST | `/api/str/{case_id}/generate` | 🔨 STR generation (Week 3) |
-| GET | `/api/blockchain/{case_id}` | 🔨 Audit trail (Week 3) |
+| POST | `/api/str/{case_id}/generate` | ✅ SSE stream — Gemini STR draft |
+| POST | `/api/str/{case_id}/draft` | ✅ Save investigator draft |
+| GET | `/api/str/{case_id}/pdf` | ✅ Download PDF |
+| GET | `/api/str/{case_id}/download` | ✅ Download .txt |
+| POST | `/api/str/{case_id}/submit` | ✅ Submit to FIU-IND (+ blockchain) |
+| GET | `/api/blockchain/{case_id}` | ✅ Audit trail |
 | WS | `/ws/alerts` | ✅ Real-time websocket |
 
 ### Sample Response
@@ -119,6 +134,15 @@ $ curl http://localhost:8000/api/alerts?limit=2
 }
 ```
 
+## STR generation (Gemini)
+
+1. Set `GEMINI_API_KEY` in `.env` (see `.env.example`).
+2. Seed data: `python3 backend/database/demo_seed.py --mode local`
+3. Start API + frontend; open a case → **Generate STR Report**.
+4. On the STR page: **Save draft**, **Download PDF**, **Download .txt**, edit narrative, **Submit**.
+
+Without an API key, a template fallback STR is generated so the demo still runs.
+
 ## 🔨 Still To Build
 
 ### Week 2 - GNN Model
@@ -128,15 +152,14 @@ $ curl http://localhost:8000/api/alerts?limit=2
 - [ ] Elliptic dataset integration
 
 ### Week 3 - LLM & Blockchain
-- [ ] Claude STR generation (`backend/llm/str_generator.py`)
-- [ ] Hindi translation
-- [ ] Blockchain evidence chain (`backend/blockchain/evidence_chain.py`)
+- [x] Gemini STR generation (`backend/llm/str_generator.py`) — SSE + bilingual narrative
+- [x] Save draft / PDF / TXT export (`backend/api/routes/str_report.py`)
+- [x] Blockchain evidence chain (`backend/blockchain/evidence_chain.py`)
 
 ### Week 4 - Frontend
-- [ ] TypeScript API client (`src/api/client.ts`)
-- [ ] Graph visualization hook (`src/hooks/useGraphData.ts`)
-- [ ] Sigma.js integration
-- [ ] Connect to real backend
+- [x] TypeScript API client (`src/api/client.ts`)
+- [x] Fund-flow graph + STR screen wired to case `?case=`
+- [ ] Sigma.js (optional; SVG graph works for demo)
 
 ### Deliverables (Due May 31)
 - [ ] D1: Problem & Solution Brief

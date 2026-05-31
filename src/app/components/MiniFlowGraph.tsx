@@ -1,84 +1,99 @@
-export default function MiniFlowGraph() {
-  // Compact version of the flow graph for the STR screen
-  const nodes = [
-    { id: 'ACC-0041', x: 15, y: 50, r: 16, color: '#F59E0B' },
-    { id: 'ACC-0112', x: 30, y: 35, r: 12, color: '#F59E0B' },
-    { id: 'ACC-0203', x: 30, y: 65, r: 12, color: '#F59E0B' },
-    { id: 'ACC-0089', x: 50, y: 50, r: 16, color: '#E31E24' },
-    { id: 'ACC-0317', x: 70, y: 35, r: 12, color: '#F59E0B' },
-    { id: 'ACC-0455', x: 70, y: 65, r: 12, color: '#F59E0B' },
-    { id: 'ACC-0041-R', x: 85, y: 50, r: 14, color: '#E31E24' },
-  ];
+import { useMemo } from 'react';
+import { useAlertDetail } from '../../hooks/useAlerts';
+import { subgraphToLayout } from '../../lib/subgraphLayout';
+import GraphNode from './GraphNode';
+import FlowArrow from './FlowArrow';
 
-  const arrows = [
-    { from: nodes[0], to: nodes[1] },
-    { from: nodes[0], to: nodes[2] },
-    { from: nodes[1], to: nodes[3] },
-    { from: nodes[2], to: nodes[3] },
-    { from: nodes[3], to: nodes[4] },
-    { from: nodes[3], to: nodes[5] },
-    { from: nodes[4], to: nodes[6] },
-    { from: nodes[5], to: nodes[6] },
-  ];
+interface MiniFlowGraphProps {
+  caseId?: string;
+}
+
+export default function MiniFlowGraph({ caseId }: MiniFlowGraphProps) {
+  const { detail, loading } = useAlertDetail(caseId || null);
+  const { nodes, arrows } = useMemo(
+    () => subgraphToLayout(detail?.subgraph, detail?.typology, 'mini'),
+    [detail],
+  );
+
+  const hubId = detail?.subgraph?.nodes?.find((n) => n.is_hub)?.id;
+  const originId = detail?.subgraph?.nodes?.find((n) => n.is_origin)?.id;
+
+  if (loading) {
+    return (
+      <div
+        className="bg-gray-50 border border-gray-200 rounded-lg flex items-center justify-center text-gray-500 text-xs"
+        style={{ height: '340px' }}
+      >
+        Loading fund flow…
+      </div>
+    );
+  }
+
+  if (!nodes.length) {
+    return (
+      <div
+        className="bg-gray-50 border border-gray-200 rounded-lg flex items-center justify-center text-gray-500 text-xs"
+        style={{ height: '340px' }}
+      >
+        {caseId ? 'No subgraph for this case' : 'Select a case to preview the fund flow'}
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4" style={{ height: '340px' }}>
+    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 relative" style={{ height: '340px' }}>
       <svg className="w-full h-full">
         <defs>
-          <marker
-            id="mini-arrow"
-            markerWidth="6"
-            markerHeight="6"
-            refX="5"
-            refY="3"
-            orient="auto"
-          >
-            <path d="M0,0 L0,6 L6,3 z" fill="#E31E24" opacity="0.6" />
+          <marker id="mini-arrowhead-red" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L0,8 L8,4 z" fill="#EF4444" opacity="0.7" />
           </marker>
+          <marker id="mini-arrowhead-teal" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L0,8 L8,4 z" fill="#00C9A7" opacity="0.5" />
+          </marker>
+          <filter id="mini-amber-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id="mini-red-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="2.5" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
-        {/* Arrows */}
-        {arrows.map((arrow, idx) => (
-          <line
-            key={idx}
-            x1={`${arrow.from.x}%`}
-            y1={`${arrow.from.y}%`}
-            x2={`${arrow.to.x}%`}
-            y2={`${arrow.to.y}%`}
-            stroke="#E31E24"
-            strokeWidth="1.5"
-            strokeDasharray="3 3"
-            opacity="0.6"
-            markerEnd="url(#mini-arrow)"
-          />
+        {arrows.map((arrow) => (
+          <FlowArrow key={arrow.id} {...arrow} color={arrow.color || 'red'} />
         ))}
 
-        {/* Curved return arrow */}
-        <path
-          d={`M ${nodes[3].x}% ${nodes[3].y}% Q 50% 15%, ${nodes[6].x}% ${nodes[6].y}%`}
-          fill="none"
-          stroke="#E31E24"
-          strokeWidth="2"
-          strokeDasharray="3 3"
-          opacity="0.7"
-          markerEnd="url(#mini-arrow)"
-        />
-
-        {/* Nodes */}
         {nodes.map((node) => (
-          <g key={node.id}>
-            <circle
-              cx={`${node.x}%`}
-              cy={`${node.y}%`}
-              r={node.r}
-              fill="white"
-              stroke={node.color}
-              strokeWidth="2.5"
-              style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.08))' }}
-            />
-          </g>
+          <GraphNode key={node.id} {...node} />
         ))}
       </svg>
+
+      <div
+        className="absolute bottom-2 left-2 right-2 flex flex-wrap gap-x-3 gap-y-1 text-[9px] text-gray-600 bg-white/90 rounded px-2 py-1 border border-gray-100"
+        style={{ fontFamily: 'DM Mono' }}
+      >
+        <span>
+          <span className="text-[#F59E0B] font-bold">●</span> Account
+        </span>
+        {originId && (
+          <span>
+            <span className="text-[#F59E0B] font-bold">●</span> Origin {originId}
+          </span>
+        )}
+        {hubId && (
+          <span>
+            <span className="text-[#E31E24] font-bold">●</span> Hub {hubId}
+          </span>
+        )}
+        <span className="text-gray-400">Top flows only · {detail?.accounts_count ?? nodes.length} accts</span>
+      </div>
     </div>
   );
 }

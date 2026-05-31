@@ -448,6 +448,7 @@ class AnalyticsData(BaseModel):
 # ── QUERY MODELS ─────────────────────────────────────────────────
 class NLQueryRequest(BaseModel):
     query: str = Field(..., min_length=3, max_length=500)
+    case_id: Optional[str] = Field(None, description="Active investigation case for context")
 
 class NLQueryResponse(BaseModel):
     query:        str

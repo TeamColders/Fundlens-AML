@@ -1,344 +1,232 @@
-import { Mic, Send, ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { Loader2, Send } from 'lucide-react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { queryGraph } from '../../api/client';
 import type { NLQueryResult } from '../../api/types';
+import { useAlertDetail } from '../../hooks/useAlerts';
+import { useSelectedCaseId } from '../../hooks/useSelectedCaseId';
+import NLQueryResults from '../components/NLQueryResults';
+
+type ChatMessage =
+  | { id: string; role: 'user'; text: string }
+  | { id: string; role: 'assistant'; result: NLQueryResult; showCypher: boolean }
+  | { id: string; role: 'error'; text: string };
+
+function newId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
 export default function NLQuery() {
   const [query, setQuery] = useState('');
-  const [showCypher, setShowCypher] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isTyping, setIsTyping] = useState(false);
-  const [result, setResult] = useState<NLQueryResult | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { caseId } = useSelectedCaseId();
+  const { detail } = useAlertDetail(caseId || null);
 
-  const handleQuery = async () => {
-    if (!query.trim()) return;
-    setIsTyping(true);
-    setResult(null);
-    try {
-      const data = await queryGraph(query);
-      setResult(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsTyping(false);
-    }
+  const originAccountId = useMemo(
+    () => detail?.subgraph?.nodes?.find((n) => n.is_origin)?.id,
+    [detail],
+  );
+
+  const suggestedQueries = useMemo(
+    () => [
+      originAccountId
+        ? `Show me all accounts connected to ${originAccountId}`
+        : 'Show accounts in the active investigation case',
+      caseId ? `List all accounts in case ${caseId}` : 'Which accounts act as transaction hubs?',
+      'Which accounts received transfers from dormant accounts?',
+      'Find structuring patterns above ₹10L',
+      caseId
+        ? `Explain why case ${caseId} was flagged and what to investigate next`
+        : 'Explain the typology pattern in the highest-risk open case',
+    ],
+    [originAccountId, caseId],
+  );
+
+  const scrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    });
+  }, []);
+
+  const sendQuery = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isTyping) return;
+
+      setQuery('');
+      setMessages((prev) => [...prev, { id: newId(), role: 'user', text: trimmed }]);
+      setIsTyping(true);
+      scrollToBottom();
+
+      try {
+        const data = await queryGraph(trimmed, caseId);
+        setMessages((prev) => [
+          ...prev,
+          { id: newId(), role: 'assistant', result: data, showCypher: false },
+        ]);
+      } catch (e) {
+        setMessages((prev) => [
+          ...prev,
+          { id: newId(), role: 'error', text: (e as Error).message || 'Query failed' },
+        ]);
+      } finally {
+        setIsTyping(false);
+        scrollToBottom();
+      }
+    },
+    [caseId, isTyping, scrollToBottom],
+  );
+
+  const toggleCypher = (messageId: string) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.role === 'assistant' && m.id === messageId ? { ...m, showCypher: !m.showCypher } : m,
+      ),
+    );
   };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleQuery();
-    }
-  };
-
-  const suggestedQueries = [
-    'Show me all accounts connected to ACC-0041',
-    'Which accounts had sudden activity after 6+ months of dormancy?',
-    'Find all structuring patterns above ₹10L this week',
-  ];
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-200">
+      <div className="p-6 border-b border-gray-200 shrink-0">
         <h1 className="text-gray-900 text-2xl font-bold mb-2" style={{ fontFamily: 'Syne' }}>
           Natural Language Query
         </h1>
         <p className="text-gray-700 text-sm">
-          Ask anything about accounts, entities, or transaction patterns
+          Ask about accounts, fund flows, and typologies — answers come from your case database
+          {caseId ? (
+            <>
+              {' '}
+              (active case <span style={{ fontFamily: 'DM Mono' }}>{caseId}</span>)
+            </>
+          ) : null}
         </p>
       </div>
 
-      {/* Conversation Area */}
-      <div className="flex-1 overflow-auto p-6 space-y-6 pb-32">
-        {/* Query 1 */}
-        <div className="flex justify-end">
-          <div className="bg-[#E31E24] rounded-2xl rounded-tr-sm px-5 py-3 max-w-2xl">
-            <p className="text-white text-sm font-medium">
-              Show me all accounts that received transfers from dormant accounts this week
+      <div ref={scrollRef} className="flex-1 overflow-auto p-6 space-y-6 pb-4">
+        {messages.length === 0 && (
+          <div className="max-w-xl mx-auto text-center py-16">
+            <p className="text-gray-600 text-sm mb-2">No messages yet</p>
+            <p className="text-gray-500 text-xs">
+              Try a suggested query below or ask in plain English. When Neo4j is available, queries
+              run as Cypher; otherwise FundLens uses the SQL investigation store.
             </p>
           </div>
-        </div>
+        )}
 
-        {/* Response 1 */}
-        <div className="flex justify-start">
-          <div className="max-w-3xl">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 rounded-full bg-white border border-[#E31E24] flex items-center justify-center text-[#E31E24] text-xs font-bold">
-                FL
-              </div>
-              <span className="text-xs text-gray-700">FundLens AI</span>
-              <span className="px-2 py-1 bg-[#3B82F6] text-white rounded text-[10px] font-semibold">
-                GNN + Neo4j
-              </span>
-            </div>
-
-            <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm p-5">
-              <div className="mb-4">
-                <p className="text-gray-900 text-sm mb-4">
-                  Found 4 accounts that received transfers from dormant accounts in the last 7 days:
-                </p>
-
-                {/* Results table */}
-                <div className="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-xs" style={{ fontFamily: 'DM Mono' }}>
-                    <thead>
-                      <tr className="bg-white text-gray-700">
-                        <th className="text-left py-3 px-4">Account ID</th>
-                        <th className="text-right py-3 px-4">Amount Received</th>
-                        <th className="text-right py-3 px-4">Source Dormancy</th>
-                        <th className="text-right py-3 px-4">Risk Score</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-t border-gray-200">
-                        <td className="py-3 px-4 text-gray-900">ACC-0041</td>
-                        <td className="py-3 px-4 text-right text-[#E31E24] font-bold">₹47,23,000</td>
-                        <td className="py-3 px-4 text-right text-[#F59E0B]">26 months</td>
-                        <td className="py-3 px-4 text-right text-[#E31E24] font-bold">87</td>
-                      </tr>
-                      <tr className="border-t border-gray-200">
-                        <td className="py-3 px-4 text-gray-900">ACC-0203</td>
-                        <td className="py-3 px-4 text-right text-[#F59E0B] font-bold">₹18,92,000</td>
-                        <td className="py-3 px-4 text-right text-[#F59E0B]">14 months</td>
-                        <td className="py-3 px-4 text-right text-[#F59E0B] font-bold">68</td>
-                      </tr>
-                      <tr className="border-t border-gray-200">
-                        <td className="py-3 px-4 text-gray-900">ACC-0455</td>
-                        <td className="py-3 px-4 text-right text-gray-900 font-bold">₹9,45,000</td>
-                        <td className="py-3 px-4 text-right text-gray-700">8 months</td>
-                        <td className="py-3 px-4 text-right text-[#F59E0B] font-bold">54</td>
-                      </tr>
-                      <tr className="border-t border-gray-200">
-                        <td className="py-3 px-4 text-gray-900">ACC-0821</td>
-                        <td className="py-3 px-4 text-right text-gray-900 font-bold">₹6,12,000</td>
-                        <td className="py-3 px-4 text-right text-gray-700">9 months</td>
-                        <td className="py-3 px-4 text-right text-[#E31E24] font-bold">42</td>
-                      </tr>
-                    </tbody>
-                  </table>
+        {messages.map((msg) => {
+          if (msg.role === 'user') {
+            return (
+              <div key={msg.id} className="flex justify-end">
+                <div className="bg-[#E31E24] rounded-2xl rounded-tr-sm px-5 py-3 max-w-2xl">
+                  <p className="text-white text-sm font-medium">{msg.text}</p>
                 </div>
               </div>
+            );
+          }
 
-              {/* Expandable Cypher query */}
-              <div className="border-t border-gray-200 pt-4">
-                <button
-                  onClick={() => setShowCypher(!showCypher)}
-                  className="flex items-center gap-2 text-xs text-gray-700 hover:text-gray-900 transition-colors"
-                >
-                  <ChevronDown className={`w-4 h-4 transition-transform ${showCypher ? 'rotate-180' : ''}`} />
-                  Cypher query used:
-                </button>
-                {showCypher && (
-                  <div className="mt-3 bg-gray-50 border border-gray-200 rounded p-3">
-                    <pre className="text-xs text-[#E31E24] overflow-x-auto" style={{ fontFamily: 'DM Mono' }}>
-{`MATCH (source:Account)-[t:TRANSFER]->(target:Account)
-WHERE source.lastActive < date() - duration({months: 6})
-  AND t.timestamp > date() - duration({days: 7})
-RETURN target.id, sum(t.amount) as totalReceived, 
-       source.dormancyMonths, target.riskScore
-ORDER BY target.riskScore DESC`}
-                    </pre>
-                  </div>
-                )}
-              </div>
-
-              <button className="mt-4 text-[#E31E24] hover:underline text-xs flex items-center gap-1">
-                <ExternalLink className="w-3 h-3" />
-                Open in graph view →
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Query 2 */}
-        <div className="flex justify-end">
-          <div className="bg-[#E31E24] rounded-2xl rounded-tr-sm px-5 py-3 max-w-2xl">
-            <p className="text-white text-sm font-medium">
-              What is the risk profile of entity RAJESH KUMAR PAN XXXXX1234X?
-            </p>
-          </div>
-        </div>
-
-        {/* Response 2 */}
-        <div className="flex justify-start">
-          <div className="max-w-3xl">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 rounded-full bg-white border border-[#E31E24] flex items-center justify-center text-[#E31E24] text-xs font-bold">
-                FL
-              </div>
-              <span className="text-xs text-gray-700">FundLens AI</span>
-              <span className="px-2 py-1 bg-[#3B82F6] text-white rounded text-[10px] font-semibold">
-                GNN + Neo4j
-              </span>
-            </div>
-
-            <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm p-5">
-              {/* Entity card */}
-              <div className="bg-gray-50 border-l-4 border-[#E31E24] rounded-lg p-4 mb-4">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="text-gray-900 font-bold text-lg mb-1" style={{ fontFamily: 'Syne' }}>
-                      Rajesh Kumar
-                    </h3>
-                    <div className="text-gray-700 text-xs" style={{ fontFamily: 'DM Mono' }}>
-                      PAN: XXXXX1234X
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs text-gray-700 mb-1">Risk Score</div>
-                    <div className="text-[#E31E24] text-3xl font-bold" style={{ fontFamily: 'Syne' }}>
-                      87%
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4 pt-3 border-t border-gray-200">
-                  <div>
-                    <div className="text-xs text-gray-700 mb-1">Accounts</div>
-                    <div className="text-gray-900 font-bold">2</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-700 mb-1">Typologies detected</div>
-                    <div className="text-[#E31E24] font-bold">3</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-700 mb-1">Network size</div>
-                    <div className="text-gray-900 font-bold">14</div>
-                  </div>
-                </div>
-
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                  <div className="text-xs text-gray-700 mb-2">Active typologies:</div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="px-2 py-1 bg-[#E31E24] text-white rounded text-xs font-semibold">
-                      Round-trip Layering
-                    </span>
-                    <span className="px-2 py-1 bg-[#F59E0B] text-white rounded text-xs font-semibold">
-                      Dormant Activation
-                    </span>
-                    <span className="px-2 py-1 bg-[#F59E0B] text-white rounded text-xs font-semibold">
-                      Structuring
-                    </span>
-                  </div>
+          if (msg.role === 'error') {
+            return (
+              <div key={msg.id} className="flex justify-start">
+                <div className="max-w-3xl bg-red-50 border border-red-200 rounded-2xl p-4 text-sm text-red-800">
+                  {msg.text}
                 </div>
               </div>
+            );
+          }
 
-              <button className="text-[#E31E24] hover:underline text-xs flex items-center gap-1">
-                <ExternalLink className="w-3 h-3" />
-                View full entity profile →
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Live Query Results */}
-        {result && (
-          <>
-            <div className="flex justify-end">
-              <div className="bg-[#E31E24] rounded-2xl rounded-tr-sm px-5 py-3 max-w-2xl">
-                <p className="text-white text-sm font-medium">{result.query}</p>
-              </div>
-            </div>
-
-            <div className="flex justify-start">
-              <div className="max-w-3xl">
-                <div className="flex items-center gap-2 mb-3">
+          const { result } = msg;
+          return (
+            <div key={msg.id} className="flex justify-start">
+              <div className="max-w-3xl w-full">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <div className="w-8 h-8 rounded-full bg-white border border-[#E31E24] flex items-center justify-center text-[#E31E24] text-xs font-bold">
                     FL
                   </div>
                   <span className="text-xs text-gray-700">FundLens AI</span>
                   <span className="px-2 py-1 bg-[#3B82F6] text-white rounded text-[10px] font-semibold">
-                    GNN + LLM
+                    {result.source === 'neo4j'
+                      ? 'Neo4j'
+                      : result.source === 'gemini'
+                        ? 'Gemini'
+                        : result.source === 'gemini+sql'
+                          ? 'SQL + Gemini'
+                          : result.source === 'neo4j+gemini'
+                            ? 'Neo4j + Gemini'
+                            : 'SQL'}
                   </span>
-                  <span className="text-xs text-gray-400">({result.execution_ms}ms)</span>
+                  {result.model_used && result.model_used !== 'fallback-template' && (
+                    <span className="text-[10px] text-gray-500">{result.model_used}</span>
+                  )}
+                  <span className="text-xs text-gray-400">{result.execution_ms}ms</span>
                 </div>
-
                 <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm p-5">
-                  <p className="text-gray-900 text-sm mb-4">
-                    Found {result.result_count} results:
-                  </p>
-
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg overflow-x-auto mb-4">
-                    <pre className="p-4 text-xs text-gray-800" style={{ fontFamily: 'DM Mono' }}>
-                      {JSON.stringify(result.results, null, 2)}
-                    </pre>
-                  </div>
-
-                  <div className="border-t border-gray-200 pt-4">
-                    <button
-                      onClick={() => setShowCypher(!showCypher)}
-                      className="flex items-center gap-2 text-xs text-gray-700 hover:text-gray-900 transition-colors"
-                    >
-                      <ChevronDown className={`w-4 h-4 transition-transform ${showCypher ? 'rotate-180' : ''}`} />
-                      Cypher query used:
-                    </button>
-                    {showCypher && (
-                      <div className="mt-3 bg-gray-50 border border-gray-200 rounded p-3">
-                        <pre className="text-xs text-[#E31E24] overflow-x-auto" style={{ fontFamily: 'DM Mono' }}>
-                          {result.cypher}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
+                  <NLQueryResults
+                    result={result}
+                    showCypher={msg.showCypher}
+                    onToggleCypher={() => toggleCypher(msg.id)}
+                    caseId={caseId}
+                  />
                 </div>
               </div>
             </div>
-          </>
-        )}
+          );
+        })}
 
         {isTyping && (
           <div className="flex justify-start">
-            <div className="max-w-3xl">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-full bg-white border border-[#E31E24] flex items-center justify-center text-[#E31E24] text-xs font-bold">FL</div>
-                <span className="text-xs text-gray-700">FundLens AI typing...</span>
-              </div>
-              <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm p-5 w-24">
-                <div className="flex items-center gap-1">
-                  <div className="w-2 h-2 rounded-full bg-[#E31E24] animate-pulse" />
-                  <div className="w-2 h-2 rounded-full bg-[#E31E24] animate-pulse" style={{ animationDelay: '0.2s' }} />
-                  <div className="w-2 h-2 rounded-full bg-[#E31E24] animate-pulse" style={{ animationDelay: '0.4s' }} />
-                </div>
-              </div>
+            <div className="flex items-center gap-2 text-gray-500 text-sm">
+              <Loader2 className="w-4 h-4 animate-spin text-[#E31E24]" />
+              Running query…
             </div>
           </div>
         )}
       </div>
 
-      {/* Query Input Bar - Fixed at bottom */}
-      <div className="border-t border-gray-200 bg-white p-6">
-        {/* Suggested queries */}
+      <div className="border-t border-gray-200 bg-white p-6 shrink-0">
         <div className="mb-4 flex flex-wrap gap-2">
-          {suggestedQueries.map((suggested, idx) => (
+          {suggestedQueries.map((suggested) => (
             <button
-              key={idx}
-              onClick={() => setQuery(suggested)}
-              className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-full text-xs text-gray-700 hover:border-[#E31E24] hover:text-gray-900 transition-colors"
+              key={suggested}
+              type="button"
+              onClick={() => sendQuery(suggested)}
+              disabled={isTyping}
+              className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-full text-xs text-gray-700 hover:border-[#E31E24] hover:text-gray-900 transition-colors disabled:opacity-50"
             >
               {suggested}
             </button>
           ))}
         </div>
 
-        {/* Input bar */}
         <div className="flex items-center gap-3">
-          <div className="flex-1 bg-gray-50 border border-gray-200 rounded-full px-5 py-4 flex items-center gap-3">
+          <div className="flex-1 bg-gray-50 border border-gray-200 rounded-full px-5 py-3">
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder="Ask anything about any account, entity, or transaction pattern..."
-              className="flex-1 bg-transparent text-gray-900 text-[15px] placeholder-[#E31E24] placeholder-opacity-40 outline-none"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendQuery(query);
+                }
+              }}
+              placeholder="Ask about accounts, entities, or transaction patterns…"
+              disabled={isTyping}
+              className="w-full bg-transparent text-gray-900 text-[15px] placeholder:text-gray-400 outline-none disabled:opacity-60"
             />
-            <button className="text-gray-700 hover:text-gray-900 transition-colors">
-              <Mic className="w-5 h-5" />
-            </button>
           </div>
-          <button 
-            onClick={handleQuery}
-            className="w-[40px] h-[40px] bg-[#E31E24] rounded-full flex items-center justify-center hover:bg-[#d4183d] transition-colors"
+          <button
+            type="button"
+            onClick={() => sendQuery(query)}
+            disabled={isTyping || !query.trim()}
+            className="w-10 h-10 bg-[#E31E24] rounded-full flex items-center justify-center hover:bg-[#d4183d] transition-colors disabled:opacity-50"
+            aria-label="Send query"
           >
-            <Send className="w-5 h-5 text-white" />
+            {isTyping ? (
+              <Loader2 className="w-5 h-5 text-white animate-spin" />
+            ) : (
+              <Send className="w-5 h-5 text-white" />
+            )}
           </button>
         </div>
       </div>

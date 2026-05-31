@@ -1,25 +1,29 @@
 import { useState, useMemo } from 'react';
-import { useLocation, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import GraphNode from '../components/GraphNode';
 import FlowArrow from '../components/FlowArrow';
 import NodeTooltip from '../components/NodeTooltip';
 import { useAlertDetail, useAlerts } from '../../hooks/useAlerts';
+import { usePersistCaseContext } from '../../hooks/useCaseContext';
+import { useSelectedCaseId } from '../../hooks/useSelectedCaseId';
+import { pathWithCase } from '../../lib/selectedCase';
 import { subgraphToLayout, formatAmount } from '../../lib/subgraphLayout';
 
 export default function FundFlowGraph() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
 
-  const qs = new URLSearchParams(location.search);
-  const caseFromQuery = qs.get('case');
+  const { caseId, setCaseId } = useSelectedCaseId();
   const { alerts } = useAlerts();
-  const [selectedCase, setSelectedCase] = useState(caseFromQuery || '');
-
-  const caseId = selectedCase || caseFromQuery || alerts?.[0]?.case_id || '';
   const { detail, loading, error } = useAlertDetail(caseId || null);
+  usePersistCaseContext(caseId || null, detail);
+
+  const hoveredGraphNode = useMemo(
+    () => detail?.subgraph?.nodes?.find((n) => n.id === hoveredNode),
+    [detail, hoveredNode],
+  );
 
   const { nodes, arrows } = useMemo(
     () => subgraphToLayout(detail?.subgraph, detail?.typology, 'full'),
@@ -32,8 +36,8 @@ export default function FundFlowGraph() {
   }, [detail]);
 
   const handleCaseChange = (id: string) => {
-    setSelectedCase(id);
-    navigate(`/graph?case=${encodeURIComponent(id)}`, { replace: true });
+    setCaseId(id);
+    navigate(pathWithCase('/graph', id), { replace: true });
   };
 
   const handleNodeHover = (nodeId: string | null, x?: number, y?: number) => {
@@ -120,7 +124,7 @@ export default function FundFlowGraph() {
           </select>
           <button
             type="button"
-            onClick={() => navigate(`/str-generation?case=${encodeURIComponent(caseId)}`)}
+            onClick={() => navigate(pathWithCase('/str-generation', caseId))}
             className="px-3 py-1.5 text-xs bg-[#E31E24] text-white rounded-lg hover:bg-[#c91920]"
           >
             Generate STR
@@ -175,7 +179,12 @@ export default function FundFlowGraph() {
           )}
 
           {hoveredNode && (
-            <NodeTooltip nodeId={hoveredNode} x={tooltipPosition.x} y={tooltipPosition.y} />
+            <NodeTooltip
+              nodeId={hoveredNode}
+              x={tooltipPosition.x}
+              y={tooltipPosition.y}
+              node={hoveredGraphNode}
+            />
           )}
 
           {hubNode && (

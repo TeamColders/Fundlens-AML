@@ -1,27 +1,70 @@
-import { ArrowLeft, Check, Edit3, ExternalLink, Save, Download, Globe, Loader2 } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router';
-import { useState, useEffect } from 'react';
+import {
+  ArrowLeft,
+  Check,
+  Download,
+  ExternalLink,
+  Globe,
+  Loader2,
+  RefreshCw,
+  Save,
+} from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MiniFlowGraph from '../components/MiniFlowGraph';
+import { saveSTRDraft, submitSTR } from '../../api/client';
 import { useSTRGeneration } from '../../hooks/useSTRGeneration';
 import { useBlockchain } from '../../hooks/useBlockchain';
 import { useAlertDetail } from '../../hooks/useAlerts';
+import { usePersistCaseContext } from '../../hooks/useCaseContext';
+import { useSelectedCaseId } from '../../hooks/useSelectedCaseId';
+import type { STRReport } from '../../api/types';
+import { buildReportText, downloadStrPdf, downloadStrText } from '../../lib/strExport';
 
 export default function STRGeneration() {
   const navigate = useNavigate();
-  const { id } = useParams<{ id: string }>();
-  const caseId = id || 'CASE-2847';
-  
-  const [language, setLanguage] = useState<'EN' | 'HI'>('EN');
-  const [draftSaved, setDraftSaved] = useState(false);
+  const { caseId } = useSelectedCaseId();
 
   const { stage, message, progress, report, error, generating, generate } = useSTRGeneration();
-  const { chain } = useBlockchain(caseId);
-  const { detail } = useAlertDetail(caseId);
+  const { chain } = useBlockchain(caseId || null);
+  const { detail, error: detailError } = useAlertDetail(caseId || null);
+  usePersistCaseContext(caseId || null, detail);
 
-  // Auto-start generation on mount
+  const [language, setLanguage] = useState<'EN' | 'HI'>('EN');
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState<'pdf' | 'txt' | null>(null);
+  const [editedReport, setEditedReport] = useState<STRReport | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const autoGenCaseRef = useRef<string | null>(null);
+
   useEffect(() => {
+    if (!caseId || autoGenCaseRef.current === caseId) return;
+    autoGenCaseRef.current = caseId;
     generate(caseId);
-  }, [generate, caseId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- auto-run once per case
+  }, [caseId]);
+
+  useEffect(() => {
+    if (report) setEditedReport(report);
+  }, [report]);
+
+  const activeReport = editedReport || report;
+
+  const fullText = useMemo(
+    () =>
+      activeReport
+        ? buildReportText(activeReport, detail ?? undefined, caseId)
+        : '',
+    [activeReport, detail, caseId],
+  );
+
+  const narrativeText =
+    language === 'EN'
+      ? activeReport?.english_narrative || ''
+      : activeReport?.hindi_narrative || '[Hindi translation pending]';
+
+  const recommendedAction = activeReport?.recommended_action || '';
+  const regulatoryBasis = activeReport?.regulatory_basis || '';
 
   const today = new Date().toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -29,13 +72,84 @@ export default function STRGeneration() {
     year: 'numeric',
   });
 
-  const handleExport = () => {
-    console.log('Exporting PDF');
+  const handleSaveDraft = useCallback(async () => {
+    if (!caseId || !activeReport) return;
+    setSaving(true);
+    try {
+      const text = buildReportText(activeReport, detail ?? undefined, caseId);
+      await saveSTRDraft(caseId, {
+        full_report_text: text,
+        english_narrative: activeReport.english_narrative,
+        hindi_narrative: activeReport.hindi_narrative,
+        recommended_action: activeReport.recommended_action,
+        regulatory_basis: activeReport.regulatory_basis,
+        investigator_id: 'investigator-001',
+      });
+      setEditedReport({ ...activeReport, full_report_text: text });
+      setDraftSaved(true);
+      setTimeout(() => setDraftSaved(false), 3000);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }, [caseId, activeReport, fullText]);
+
+  const handleDownloadPdf = async () => {
+    if (!caseId) return;
+    setDownloading('pdf');
+    try {
+      if (activeReport) {
+        const text = buildReportText(activeReport, detail ?? undefined, caseId);
+        await saveSTRDraft(caseId, {
+          full_report_text: text,
+          english_narrative: activeReport.english_narrative,
+          hindi_narrative: activeReport.hindi_narrative,
+          recommended_action: activeReport.recommended_action,
+          regulatory_basis: activeReport.regulatory_basis,
+        });
+      }
+      await downloadStrPdf(caseId);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setDownloading(null);
+    }
   };
-  
-  const handleSaveDraft = () => {
-    setDraftSaved(true);
-    setTimeout(() => setDraftSaved(false), 3000);
+
+  const handleDownloadTxt = async () => {
+    if (!caseId) return;
+    setDownloading('txt');
+    try {
+      if (activeReport) {
+        const text = buildReportText(activeReport, detail ?? undefined, caseId);
+        await saveSTRDraft(caseId, {
+          full_report_text: text,
+          english_narrative: activeReport.english_narrative,
+          hindi_narrative: activeReport.hindi_narrative,
+          recommended_action: activeReport.recommended_action,
+          regulatory_basis: activeReport.regulatory_basis,
+        });
+      }
+      await downloadStrText(caseId);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!caseId || !fullText) return;
+    setSubmitting(true);
+    try {
+      const result = await submitSTR(caseId, fullText, 'investigator-001');
+      alert(`Submitted to FIU-IND\nReference: ${result.fiu_reference}`);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const stages = [
@@ -54,301 +168,288 @@ export default function STRGeneration() {
     return 'pending';
   };
 
-  // Build display text from report or fallback
-  const narrativeText = report?.english_narrative ||
-    `FundLens detected a round-trip layering pattern involving seven accounts across three transaction hops. The pattern commenced when a dormant savings account (ACC-0041) was suddenly activated and dispersed funds totaling ₹47,23,000 to multiple intermediary accounts. These funds were subsequently consolidated through a central hub account (ACC-0089) exhibiting high-risk characteristics.\n\nThe consolidated amount was then distributed through additional intermediary layers before returning to the origin account (ACC-0041), completing a suspicious circular flow within 6 hours 14 minutes.`;
-
-  const hindiText = report?.hindi_narrative || '[मैन्युअल समीक्षा आवश्यक — AI अनुवाद अनुपलब्ध]';
-
-  const recommendedAction = report?.recommended_action ||
-    'Freeze implicated accounts pending investigation. Immediate escalation to law enforcement recommended given the high confidence score (94%) and rapid transaction velocity.';
-
-  const wordCount = report?.word_count || 847;
-  const pageCount = report?.page_estimate || 3;
-  const genTime = report?.generation_time_s ? `${report.generation_time_s.toFixed(0)} seconds` : '47 seconds';
-  const modelUsed = report?.model_used || 'Auto-generated';
+  if (!caseId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-sm text-gray-600">Select a case from the investigation dashboard first.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Top Bar */}
       <div className="h-[64px] bg-white border-b border-gray-200 flex items-center justify-between px-8">
-        <div className="flex items-center gap-4">
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span className="text-sm">Back to Investigation</span>
+        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 mr-2" style={{ fontFamily: 'DM Mono' }}>
+            {caseId}
+          </span>
           <button
-            onClick={() => navigate('/')}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+            type="button"
+            disabled={generating}
+            onClick={() => generate(caseId)}
+            className="px-3 py-2 border border-gray-300 rounded text-sm flex items-center gap-2 disabled:opacity-50"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span className="text-sm">Back to Investigation</span>
+            <RefreshCw className={`w-4 h-4 ${generating ? 'animate-spin' : ''}`} />
+            Regenerate
           </button>
-        </div>
-        <div className="flex items-center gap-3">
-          <button 
+          <button
+            type="button"
             onClick={handleSaveDraft}
-            className={`px-4 py-2 border transition-colors rounded text-sm flex items-center gap-2 ${draftSaved ? 'bg-green-50 border-green-500 text-green-700' : 'border-gray-400 text-gray-600 hover:bg-gray-100'}`}
+            disabled={!activeReport || saving}
+            className={`px-4 py-2 border transition-colors rounded text-sm flex items-center gap-2 ${
+              draftSaved ? 'bg-green-50 border-green-500 text-green-700' : 'border-gray-400 text-gray-600 hover:bg-gray-100'
+            }`}
           >
-            {draftSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-            {draftSaved ? 'Draft Saved' : 'Save Draft'}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : draftSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            {draftSaved ? 'Draft saved' : 'Save draft'}
           </button>
           <button
-            onClick={handleExport}
-            className="px-4 py-2 border border-gray-400 text-gray-600 hover:bg-gray-100 transition-colors rounded text-sm flex items-center gap-2"
+            type="button"
+            onClick={handleDownloadTxt}
+            disabled={!activeReport || downloading !== null}
+            className="px-4 py-2 border border-gray-400 text-gray-600 hover:bg-gray-100 rounded text-sm flex items-center gap-2 disabled:opacity-50"
           >
-            <Download className="w-4 h-4" />
-            Export PDF
+            {downloading === 'txt' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            Download .txt
           </button>
-          <button className="px-6 py-2 bg-[#E31E24] text-white hover:bg-[#d4183d] transition-colors rounded text-sm font-semibold flex items-center gap-2"
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={!activeReport || downloading !== null}
+            className="px-4 py-2 border border-[#E31E24] text-[#E31E24] hover:bg-red-50 rounded text-sm flex items-center gap-2 disabled:opacity-50"
+          >
+            {downloading === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            Download PDF
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!activeReport || submitting}
+            className="px-6 py-2 bg-[#E31E24] text-white hover:bg-[#d4183d] rounded text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
             style={{ fontFamily: 'Syne' }}
           >
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
             Submit to FIU-IND
-            <ExternalLink className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Main Content: 50/50 Split */}
       <div className="flex h-[calc(100vh-64px)]">
-        {/* LEFT PANEL */}
         <div className="w-1/2 border-r border-gray-200 p-8 overflow-auto">
-          {/* Mini Flow Graph */}
           <div className="mb-6">
-            <h3 className="text-sm text-gray-600 mb-3">Case Overview</h3>
-            <MiniFlowGraph />
+            <h3 className="text-sm text-gray-600 mb-3">Case overview — {caseId}</h3>
+            <MiniFlowGraph caseId={caseId} />
           </div>
 
-          {/* Case Summary Card */}
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-5 mb-6">
-            <h3 className="text-sm text-gray-600 mb-4">Case Summary</h3>
+            <h3 className="text-sm text-gray-600 mb-4">Case summary (fed to Gemini)</h3>
             <div className="space-y-3 text-sm" style={{ fontFamily: 'DM Mono' }}>
               <div className="flex justify-between">
-                <span className="text-gray-600">Case ID:</span>
-                <span className="text-gray-900">{caseId}</span>
-              </div>
-              <div className="flex justify-between">
                 <span className="text-gray-600">Typology:</span>
-                <span className="text-gray-900">{detail?.typology || 'Round-trip Layering'}</span>
+                <span className="text-gray-900">{detail?.typology || '—'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Amount:</span>
-                <span className="text-gray-900">₹{detail?.total_amount?.toLocaleString() || '47,23,000'}</span>
+                <span className="text-gray-900">₹{detail?.total_amount?.toLocaleString('en-IN') || '—'}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Accounts involved:</span>
-                <span className="text-gray-900">{detail?.accounts_count || 7}</span>
+                <span className="text-gray-600">Accounts:</span>
+                <span className="text-gray-900">{detail?.accounts_count ?? '—'}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Risk score:</span>
-                <span className="text-[#E31E24] font-bold">{detail?.confidence || '94%'}</span>
+                <span className="text-gray-600">GNN confidence:</span>
+                <span className="text-[#E31E24] font-bold">{detail?.confidence || '—'}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Regulatory reference:</span>
-                <span className="text-gray-900">PMLA S.16, FATF Typology 12</span>
+                <span className="text-gray-600">Model:</span>
+                <span className="text-gray-900">{activeReport?.model_used || (generating ? 'Gemini…' : '—')}</span>
               </div>
             </div>
           </div>
 
-          {/* Evidence Chain — from blockchain API */}
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-5">
-            <h3 className="text-sm text-gray-600 mb-4">Evidence Chain</h3>
-            <div className="space-y-3">
-              {(chain?.blocks || [
-                { block_id: 48291, short_hash: '0xa1b2...f3e4', timestamp: '14:23:07', verified: true },
-                { block_id: 48292, short_hash: '0xc5d6...g7h8', timestamp: '14:23:09', verified: true },
-                { block_id: 48293, short_hash: '0xe9f0...i1j2', timestamp: '14:23:12', verified: true },
-              ]).map((block: any, idx: number) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-3 bg-white border border-gray-200 rounded-md p-3"
-                >
-                  <div className="w-6 h-6 flex items-center justify-center">
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <rect x="2" y="2" width="4" height="4" fill="#E31E24" />
-                      <rect x="10" y="2" width="4" height="4" fill="#E31E24" />
-                      <rect x="2" y="10" width="4" height="4" fill="#E31E24" />
-                      <rect x="10" y="10" width="4" height="4" fill="#E31E24" />
-                      <line x1="6" y1="4" x2="10" y2="4" stroke="#E31E24" />
-                      <line x1="6" y1="12" x2="10" y2="12" stroke="#E31E24" />
-                      <line x1="4" y1="6" x2="4" y2="10" stroke="#E31E24" />
-                      <line x1="12" y1="6" x2="12" y2="10" stroke="#E31E24" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 text-xs" style={{ fontFamily: 'DM Mono' }}>
-                    <div className="text-gray-900">
-                      Block #{block.block_id} · {block.event_label || 'Verified'}
-                    </div>
-                  </div>
-                  <Check className="w-4 h-4 text-[#E31E24]" />
+            <h3 className="text-sm text-gray-600 mb-4">Evidence chain</h3>
+            <div className="space-y-2">
+              {(chain?.blocks || []).slice(0, 4).map((block) => (
+                <div key={block.block_id} className="flex items-center gap-2 text-xs bg-white border rounded p-2" style={{ fontFamily: 'DM Mono' }}>
+                  <Check className="w-3 h-3 text-[#E31E24]" />
+                  <span>#{block.block_id} · {block.event_label || block.event_type}</span>
                 </div>
               ))}
-            </div>
-            <div className="mt-4 text-xs text-gray-600" style={{ fontFamily: 'DM Mono' }}>
-              Evidence anchored to Hyperledger Fabric — tamper-proof since 14:23:07
+              {!chain?.blocks?.length && (
+                <p className="text-xs text-gray-500">Blocks recorded on generation & submit</p>
+              )}
             </div>
           </div>
         </div>
 
-        {/* RIGHT PANEL */}
         <div className="w-1/2 p-8 overflow-auto flex flex-col">
-          {/* Progress Stepper */}
-          <div className="flex items-center gap-4 mb-8">
+          <div className="flex items-center gap-4 mb-6">
             {stages.map((step, idx) => {
               const status = getStageStatus(step.key);
               return (
-                <div key={idx} className="flex items-center gap-2">
+                <div key={step.key} className="flex items-center gap-2">
                   <div
                     className={`w-6 h-6 rounded-full flex items-center justify-center ${
                       status === 'complete'
                         ? 'bg-[#E31E24]'
                         : status === 'active'
-                        ? 'bg-white border-2 border-[#E31E24]'
-                        : 'bg-white border-2 border-gray-300'
+                          ? 'border-2 border-[#E31E24]'
+                          : 'border-2 border-gray-300'
                     }`}
                   >
                     {status === 'complete' ? (
                       <Check className="w-4 h-4 text-white" />
                     ) : status === 'active' ? (
                       <div className="w-2 h-2 bg-[#E31E24] rounded-full animate-pulse" />
-                    ) : (
-                      <div className="w-2 h-2 bg-gray-300 rounded-full" />
-                    )}
+                    ) : null}
                   </div>
                   <span className={`text-xs ${status === 'pending' ? 'text-gray-400' : 'text-gray-600'}`}>
                     {step.label}
                   </span>
-                  {idx < 2 && (
-                    <div className={`w-8 h-[2px] ${status === 'pending' ? 'bg-gray-300' : 'bg-[#E31E24]'}`} />
-                  )}
+                  {idx < 2 && <div className={`w-6 h-0.5 ${status === 'pending' ? 'bg-gray-300' : 'bg-[#E31E24]'}`} />}
                 </div>
               );
             })}
+            {generating && (
+              <span className="text-xs text-gray-500 ml-2">{progress}% · {message}</span>
+            )}
           </div>
 
-          {/* Error state */}
+          {detailError && !detail && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+              Case summary unavailable ({detailError}). Run{' '}
+              <code className="text-xs">python3 backend/database/demo_seed.py --mode local</code>{' '}
+              or pick a case from the dashboard.
+            </div>
+          )}
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
               {error}
             </div>
           )}
+          {activeReport?.model_used === 'fallback-template' && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-sm">
+              <p className="font-semibold mb-1">Template draft only — Gemini did not run</p>
+              <p className="text-xs text-amber-800">
+                {activeReport.fallback_reason ||
+                  'Set a valid GEMINI_API_KEY in .env, install google-genai, and restart the API.'}
+              </p>
+              <p className="text-xs text-amber-700 mt-2">
+                Get a key at{' '}
+                <a
+                  href="https://aistudio.google.com/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  Google AI Studio
+                </a>
+                . If you see quota errors, wait 1–2 minutes before Regenerate.
+              </p>
+            </div>
+          )}
+          {activeReport?.partial && activeReport.model_used !== 'fallback-template' && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-900 text-sm">
+              English STR generated; Hindi section was skipped due to API limits. You can edit the
+              Hindi tab manually or click Regenerate later.
+            </div>
+          )}
 
-          {/* STR Report Preview */}
-          <div className="flex-1 bg-gray-50 border border-[#E31E24] rounded-xl p-6">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-3">
-                <div className="px-3 py-1 bg-[#E31E24] text-white rounded text-xs font-bold">
-                  STR-01 DRAFT
-                </div>
-                <div className="text-xs text-gray-600" style={{ fontFamily: 'DM Mono' }}>
-                  {generating ? (
-                    <span className="flex items-center gap-1">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      {message || 'Generating...'}
-                    </span>
-                  ) : (
-                    `${modelUsed} · ${genTime}`
-                  )}
-                </div>
-              </div>
+          <div className="flex-1 bg-gray-50 border border-[#E31E24] rounded-xl p-6 flex flex-col min-h-0">
+            <div className="flex items-center justify-between mb-3">
+              <div className="px-3 py-1 bg-[#E31E24] text-white rounded text-xs font-bold">STR-01 DRAFT</div>
               <div className="flex items-center gap-2">
-                {/* Language Toggle */}
-                <div className="flex items-center gap-1 bg-gray-200 rounded px-2 py-1">
-                  <Globe className="w-3 h-3 text-gray-600" />
-                  <button
-                    onClick={() => setLanguage('EN')}
-                    className={`px-2 py-0.5 rounded text-xs transition-colors ${
-                      language === 'EN' ? 'bg-[#E31E24] text-white font-bold' : 'text-gray-600'
-                    }`}
-                  >
-                    EN
-                  </button>
-                  <div className="w-px h-3 bg-gray-400 opacity-30" />
-                  <button
-                    onClick={() => setLanguage('HI')}
-                    className={`px-2 py-0.5 rounded text-xs transition-colors ${
-                      language === 'HI' ? 'bg-[#E31E24] text-white font-bold' : 'text-gray-600'
-                    }`}
-                  >
-                    HI
-                  </button>
+                <Globe className="w-3 h-3 text-gray-500" />
+                <button
+                  type="button"
+                  onClick={() => setLanguage('EN')}
+                  className={`px-2 py-0.5 rounded text-xs ${language === 'EN' ? 'bg-[#E31E24] text-white' : 'text-gray-600'}`}
+                >
+                  EN
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLanguage('HI')}
+                  className={`px-2 py-0.5 rounded text-xs ${language === 'HI' ? 'bg-[#E31E24] text-white' : 'text-gray-600'}`}
+                >
+                  HI
+                </button>
+              </div>
+            </div>
+
+            {generating && !activeReport ? (
+              <div className="flex-1 flex items-center justify-center gap-2 text-gray-500">
+                <Loader2 className="w-6 h-6 animate-spin text-[#E31E24]" />
+                <span className="text-sm">{message || 'Gemini is drafting your report…'}</span>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-auto text-[11px] leading-relaxed text-gray-700 space-y-4" style={{ fontFamily: 'DM Mono' }}>
+                <div className="font-bold text-sm">FIU-IND FORM STR-01 (DRAFT)</div>
+                <div>
+                  <div>Report Date: {today}</div>
+                  <div>Filing Entity: Union Bank of India</div>
                 </div>
-                <div className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-xs">
-                  PMLA S.16 · goAML Format
+                <div className="border-t border-gray-300 pt-3">
+                  <div className="font-bold">CASE REF: {caseId}</div>
+                  <div>TYPOLOGY: {detail?.typology}</div>
+                  <div>RISK SCORE: {detail?.confidence} (GNN)</div>
+                  <div>ACCOUNTS: {detail?.accounts_count}</div>
+                  <div>TOTAL: ₹{detail?.total_amount?.toLocaleString('en-IN')}</div>
+                  <div>PERIOD: {detail?.duration_display}</div>
                 </div>
-              </div>
-            </div>
-
-            {/* Word Count / Page Count */}
-            <div className="mb-4 text-xs text-gray-600" style={{ fontFamily: 'DM Mono' }}>
-              {pageCount} pages · {wordCount} words
-            </div>
-
-            {/* Report Content */}
-            <div
-              className="space-y-4 text-[11px] leading-relaxed text-gray-700"
-              style={{ fontFamily: 'DM Mono' }}
-            >
-              <div className="text-gray-900 font-bold text-sm mb-4">
-                FIU-IND FORM STR-01 (DRAFT)
-              </div>
-
-              <div>
-                <div className="text-gray-900">Report Date: {today}</div>
-                <div className="text-gray-900">Filing Entity: Union Bank of India</div>
-              </div>
-
-              <div className="h-[1px] bg-gray-300 my-4" />
-
-              <div>
-                <div className="text-gray-900 font-bold mb-2">CASE REF: {caseId}</div>
-                <div>TYPOLOGY: {detail?.typology || 'Round-trip Layering'}</div>
-                <div>RISK SCORE: {detail?.confidence || '94%'} (GNN confidence)</div>
-                <div>ACCOUNTS INVOLVED: {detail?.accounts_count || 7}</div>
-                <div>TOTAL AMOUNT: ₹{detail?.total_amount?.toLocaleString() || '47,23,000'}</div>
-                <div>PERIOD: {detail?.duration_display || '6 hours 14 minutes'}</div>
-              </div>
-
-              <div className="h-[1px] bg-gray-300 my-4" />
-
-              <div>
-                <div className="text-gray-900 font-bold mb-2">NARRATIVE:</div>
-                <div className="leading-relaxed opacity-90 whitespace-pre-line">
-                  {language === 'EN' ? narrativeText : hindiText}
+                <div>
+                  <div className="font-bold mb-2">NARRATIVE:</div>
+                  <textarea
+                    className="w-full min-h-[140px] p-2 border border-gray-200 rounded bg-white text-gray-800 resize-y"
+                    value={language === 'EN' ? activeReport?.english_narrative || '' : activeReport?.hindi_narrative || ''}
+                    onChange={(e) => {
+                      if (!activeReport) return;
+                      setEditedReport({
+                        ...activeReport,
+                        ...(language === 'EN'
+                          ? { english_narrative: e.target.value }
+                          : { hindi_narrative: e.target.value }),
+                      });
+                    }}
+                  />
                 </div>
-              </div>
-
-              <div className="h-[1px] bg-gray-300 my-4" />
-
-              <div>
-                <div className="text-gray-900 font-bold mb-2">RECOMMENDED ACTION:</div>
-                <div className="leading-relaxed opacity-90">
-                  {recommendedAction}
+                <div>
+                  <div className="font-bold mb-2">RECOMMENDED ACTION:</div>
+                  <textarea
+                    className="w-full min-h-[60px] p-2 border border-gray-200 rounded bg-white resize-y"
+                    value={recommendedAction}
+                    onChange={(e) =>
+                      activeReport &&
+                      setEditedReport({ ...activeReport, recommended_action: e.target.value })
+                    }
+                  />
                 </div>
+                <div>
+                  <div className="font-bold mb-2">REGULATORY BASIS:</div>
+                  <textarea
+                    className="w-full min-h-[40px] p-2 border border-gray-200 rounded bg-white resize-y"
+                    value={regulatoryBasis}
+                    onChange={(e) =>
+                      activeReport &&
+                      setEditedReport({ ...activeReport, regulatory_basis: e.target.value })
+                    }
+                  />
+                </div>
+                <p className="text-[10px] text-gray-500">
+                  {activeReport?.word_count ?? 0} words · {activeReport?.page_estimate ?? 1} pages ·{' '}
+                  {activeReport?.generation_time_s != null ? `${activeReport.generation_time_s}s` : '—'}
+                </p>
               </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3 mt-8 pt-6 border-t border-gray-300">
-              <button className="flex-1 px-6 py-3 border border-gray-400 text-gray-600 hover:bg-gray-100 transition-colors rounded-lg text-sm flex items-center justify-center gap-2">
-                <Edit3 className="w-4 h-4" />
-                Edit draft
-              </button>
-              <button className="flex-1 px-6 py-3 bg-[#E31E24] text-white hover:bg-[#d4183d] transition-colors rounded-lg text-sm font-bold flex items-center justify-center gap-2"
-                style={{ fontFamily: 'Syne' }}
-              >
-                Submit to FIU-IND
-                <ExternalLink className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Footer Note */}
-            <div className="mt-4 text-center text-[10px] text-gray-600" style={{ fontFamily: 'DM Mono' }}>
-              Submission will create immutable blockchain record
-            </div>
+            )}
           </div>
         </div>
       </div>

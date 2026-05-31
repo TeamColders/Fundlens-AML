@@ -1,0 +1,13 @@
+# Optional ML / GNN stack — install AFTER requirements.txt
+# pip install -r requirements-ml.txt
+#
+# On Python 3.13, PyTorch wheels may be limited. If install fails, use Python 3.11
+# in a venv, or skip this file for the Round 2 demo (API + STR work without it).
+
+-r requirements.txt
+
+scikit-learn>=1.5.0,<2.0.0
+scipy>=1.14.0,<2.0.0
+matplotlib>=3.8.0,<4.0.0
+torch>=2.4.0,<3.0.0
+torch-geometric>=2.6.0,<3.0.0

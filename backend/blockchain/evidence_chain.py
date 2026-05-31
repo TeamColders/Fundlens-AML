@@ -76,6 +76,7 @@ SUBGRAPH_EXPORTED       = "SUBGRAPH_EXPORTED"
 LLM_NARRATIVE_GENERATED = "LLM_NARRATIVE_GENERATED"
 SUPERVISOR_APPROVED     = "SUPERVISOR_APPROVED"
 STR_SUBMITTED           = "STR_SUBMITTED"
+INVESTIGATOR_ACTION     = "INVESTIGATOR_ACTION"
 
 ALL_EVENT_TYPES = (
     ALERT_CREATED,
@@ -84,6 +85,7 @@ ALL_EVENT_TYPES = (
     LLM_NARRATIVE_GENERATED,
     SUPERVISOR_APPROVED,
     STR_SUBMITTED,
+    INVESTIGATOR_ACTION,
 )
 
 # Human-readable labels for the frontend audit trail
@@ -94,6 +96,7 @@ EVENT_LABELS = {
     LLM_NARRATIVE_GENERATED: "LLM narrative generated",
     SUPERVISOR_APPROVED:     "STR draft reviewed",
     STR_SUBMITTED:           "STR submitted to FIU-IND",
+    INVESTIGATOR_ACTION:     "Investigator action recorded",
 }
 
 
@@ -129,7 +132,23 @@ class BlockRecord:
             return "GENESIS"
         return f"0x{self.prev_hash[:4]}...{self.prev_hash[-4:]}"
 
+    @property
+    def details(self) -> str:
+        return format_block_details(self)
+
+    @property
+    def display_timestamp(self) -> str:
+        """HH:MM:SS for UI timeline."""
+        ts = self.timestamp or ""
+        if "T" in ts:
+            part = ts.split("T", 1)[1]
+            return part[:8] if len(part) >= 8 else part
+        return ts[:8] if len(ts) >= 8 else ts
+
     def to_dict(self) -> dict:
+        preview = None
+        if self.metadata and isinstance(self.metadata, dict):
+            preview = self.metadata.get("payload_preview")
         return {
             "block_id":     self.block_id,
             "block_hash":   self.block_hash,
@@ -141,8 +160,11 @@ class BlockRecord:
             "event_label":  self.event_label,
             "payload_hash": self.payload_hash,
             "timestamp":    self.timestamp,
+            "display_timestamp": self.display_timestamp,
             "actor_id":     self.actor_id,
             "metadata":     self.metadata,
+            "payload_preview": preview,
+            "details":      self.details,
             "verified":     True,  # set to False by verify_chain if broken
         }
 
@@ -158,6 +180,10 @@ class ChainVerification:
     network:         str = "UBI-Fabric-Private"
     mode:            str = "DEMO" if DEMO_MODE else "PRODUCTION"
 
+    @property
+    def empty(self) -> bool:
+        return self.block_count == 0
+
     def to_dict(self) -> dict:
         blocks_list = []
         for b in self.blocks:
@@ -167,15 +193,23 @@ class ChainVerification:
                 d["verified"] = False
             blocks_list.append(d)
 
+        if self.empty:
+            integrity = "NO_BLOCKS"
+        elif self.valid:
+            integrity = "VERIFIED"
+        else:
+            integrity = "COMPROMISED"
+
         return {
             "valid":           self.valid,
+            "empty":           self.empty,
             "block_count":     self.block_count,
             "blocks":          blocks_list,
             "broken_at_block": self.broken_at_block,
             "verified_at":     self.verified_at,
             "network":         self.network,
             "mode":            self.mode,
-            "integrity_label": "VERIFIED" if self.valid else "COMPROMISED",
+            "integrity_label": integrity,
         }
 
 
@@ -198,6 +232,73 @@ def compute_hash(payload: dict) -> str:
     """
     serialised = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(serialised.encode("utf-8")).hexdigest()
+
+
+def format_block_details(block: BlockRecord) -> str:
+    """Human-readable audit line for UI and exports."""
+    meta = block.metadata if isinstance(block.metadata, dict) else {}
+    if meta.get("details"):
+        return str(meta["details"])
+
+    preview = meta.get("payload_preview") if isinstance(meta.get("payload_preview"), dict) else {}
+
+    if block.event_type == ALERT_CREATED:
+        gnn = preview.get("gnn_score", "")
+        pct = f"{float(gnn) * 100:.0f}%" if isinstance(gnn, (int, float)) and gnn <= 1 else str(gnn)
+        return (
+            f"Alert {block.case_id} generated · Typology: {preview.get('typology', '—')} · "
+            f"GNN score: {pct} · ₹{float(preview.get('total_amount', 0) or 0):,.0f}"
+        )
+    if block.event_type == CASE_OPENED:
+        inv = block.actor_id or preview.get("investigator") or "investigator"
+        status = preview.get("new_status") or preview.get("status") or "investigating"
+        return f"Case opened by {inv} · Status: {status}"
+    if block.event_type == SUBGRAPH_EXPORTED:
+        nodes = preview.get("node_count", "—")
+        return f"Subgraph exported for STR · {nodes} accounts · hash sealed on chain"
+    if block.event_type == LLM_NARRATIVE_GENERATED:
+        model = preview.get("model_used", "Gemini")
+        words = preview.get("word_count", "—")
+        return f"LLM narrative generated · Model: {model} · {words} words · I/O hash recorded"
+    if block.event_type == SUPERVISOR_APPROVED:
+        return f"STR draft reviewed · Investigator: {block.actor_id or '—'}"
+    if block.event_type == STR_SUBMITTED:
+        fiu = preview.get("fiu_reference", "FIU-IND")
+        sub = preview.get("submission_id", "")
+        return f"STR submitted · Ref {fiu}" + (f" · Submission {sub}" if sub else "")
+
+    if block.event_type == INVESTIGATOR_ACTION:
+        action = preview.get("action", "Action")
+        account = preview.get("account_id", "")
+        return f"{action}" + (f" · Account {account}" if account else "")
+
+    notes = meta.get("notes")
+    if notes:
+        return str(notes)
+    return f"Payload hash: {block.payload_hash[:16]}…"
+
+
+def _merge_write_metadata(
+    event_type: str,
+    payload: dict,
+    metadata: Optional[dict],
+) -> dict:
+    meta = dict(metadata or {})
+    meta.setdefault("payload_preview", payload)
+    meta.setdefault("details", format_block_details(
+        BlockRecord(
+            block_id=0,
+            block_hash="",
+            prev_hash="GENESIS",
+            case_id=payload.get("case_id", ""),
+            event_type=event_type,
+            payload_hash=compute_hash(payload),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            actor_id=meta.get("actor_id"),
+            metadata=meta,
+        )
+    ))
+    return meta
 
 
 def _compute_block_hash(
@@ -294,6 +395,7 @@ def _demo_write_block(
     ts           = datetime.now(timezone.utc).isoformat()
     payload_hash = compute_hash(payload)
     prev_hash    = _get_prev_hash(case_id, db_path)
+    metadata     = _merge_write_metadata(event_type, payload, metadata)
     meta_json    = json.dumps(metadata) if metadata else None
 
     con = sqlite3.connect(db_path)
@@ -378,7 +480,7 @@ def _demo_verify_chain(case_id: str, db_path: Path = DB_PATH) -> ChainVerificati
 
     if not blocks:
         return ChainVerification(
-            valid=False,
+            valid=True,
             block_count=0,
             blocks=[],
             broken_at_block=None,
@@ -570,6 +672,19 @@ def get_all_cases(db_path: Path = DB_PATH) -> list[str]:
     ).fetchall()
     con.close()
     return [r[0] for r in rows]
+
+
+def has_event(case_id: str, event_type: str, db_path: Path = DB_PATH) -> bool:
+    """Return True if case_id already has a block of this event_type."""
+    if PRODUCTION_MODE:
+        return False
+    con = sqlite3.connect(db_path)
+    row = con.execute(
+        "SELECT 1 FROM blocks WHERE case_id = ? AND event_type = ? LIMIT 1",
+        (case_id, event_type),
+    ).fetchone()
+    con.close()
+    return row is not None
 
 
 def get_block_count(case_id: str, db_path: Path = DB_PATH) -> int:

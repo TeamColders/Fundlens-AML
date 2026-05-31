@@ -5,7 +5,9 @@ import GraphNode from '../components/GraphNode';
 import FlowArrow from '../components/FlowArrow';
 import NodeTooltip from '../components/NodeTooltip';
 import { useAlerts, useAlertDetail } from '../../hooks/useAlerts';
+import { usePersistCaseContext } from '../../hooks/useCaseContext';
 import { subgraphToLayout, formatAmount } from '../../lib/subgraphLayout';
+import { setStoredCaseId } from '../../lib/selectedCase';
 
 function riskToPriority(risk: string): string {
   if (risk === 'critical') return 'critical';
@@ -30,6 +32,7 @@ export default function InvestigationDashboard() {
 
   // Fetch selected alert detail for subgraph
   const { detail } = useAlertDetail(selectedAlert);
+  usePersistCaseContext(selectedAlert || null, detail);
 
   // Convert API data to SVG visualization
   const { nodes, arrows } = useMemo(
@@ -42,6 +45,11 @@ export default function InvestigationDashboard() {
     if (detail) return detail;
     return alerts.find(a => a.case_id === selectedAlert);
   }, [detail, alerts, selectedAlert]);
+
+  const hoveredGraphNode = useMemo(
+    () => detail?.subgraph?.nodes?.find((n) => n.id === hoveredNode),
+    [detail, hoveredNode],
+  );
 
   const handleNodeHover = (nodeId: string | null, x?: number, y?: number) => {
     setHoveredNode(nodeId);
@@ -115,7 +123,10 @@ export default function InvestigationDashboard() {
               alerts.map((alert, idx) => (
                 <div
                   key={alert.case_id}
-                  onClick={() => setSelectedAlert(alert.case_id)}
+                  onClick={() => {
+                    setSelectedAlert(alert.case_id);
+                    setStoredCaseId(alert.case_id);
+                  }}
                   className={`p-4 border-b border-gray-200 cursor-pointer transition-colors ${
                     selectedAlert === alert.case_id
                       ? 'bg-gray-50 border-l-2 border-l-[#E31E24]'
@@ -234,7 +245,12 @@ export default function InvestigationDashboard() {
           </svg>
 
           {hoveredNode && (
-            <NodeTooltip nodeId={hoveredNode} x={tooltipPosition.x} y={tooltipPosition.y} />
+            <NodeTooltip
+              nodeId={hoveredNode}
+              x={tooltipPosition.x}
+              y={tooltipPosition.y}
+              node={hoveredGraphNode}
+            />
           )}
 
           {/* Critical chip for hub node */}
@@ -410,7 +426,9 @@ export default function InvestigationDashboard() {
             {/* Actions */}
             <div className="space-y-2">
               <button
-                onClick={() => navigate('/str-generation')}
+                onClick={() =>
+                  navigate(`/str-generation?case=${encodeURIComponent(selectedAlert)}`)
+                }
                 className="w-full px-4 py-3 bg-[#E31E24] text-white hover:bg-[#d4183d] transition-colors rounded font-bold text-sm"
                 style={{ fontFamily: 'Syne' }}
               >
@@ -418,9 +436,14 @@ export default function InvestigationDashboard() {
               </button>
               <button
                 onClick={() => {
-                  const firstNode = detail?.subgraph?.nodes?.[0];
-                  navigate(`/entity/${firstNode?.id || 'ACC-0041'}`);
+                  const origin =
+                    detail?.subgraph?.nodes?.find((n) => n.is_origin) ||
+                    detail?.subgraph?.nodes?.find((n) => n.id !== 'EXTERNAL');
+                  if (origin?.id) navigate(`/entity/${origin.id}`);
                 }}
+                disabled={
+                  !detail?.subgraph?.nodes?.some((n) => n.is_origin || n.id !== 'EXTERNAL')
+                }
                 className="w-full px-4 py-3 border border-gray-300 text-gray-900 hover:bg-gray-50 transition-colors rounded text-sm"
               >
                 View Entity Details

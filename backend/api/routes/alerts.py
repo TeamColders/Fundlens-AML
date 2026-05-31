@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
+from backend.blockchain.bootstrap import ensure_case_chain
 from backend.database.demo_data import get_alerts, get_alert_detail, update_alert_status
 from backend.blockchain.evidence_chain import write_block, CASE_OPENED
 
@@ -28,6 +29,10 @@ async def alert_detail(case_id: str):
     detail = get_alert_detail(case_id)
     if not detail:
         raise HTTPException(status_code=404, detail=f"Case {case_id} not found")
+    try:
+        ensure_case_chain(case_id)
+    except Exception as e:
+        logger.warning("Evidence chain bootstrap failed for %s: %s", case_id, e)
     return detail
 
 

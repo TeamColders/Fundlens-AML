@@ -95,7 +95,12 @@ due diligence. Be specific — name the accounts to act on.]
 
 REGULATORY BASIS:
 PMLA 2002, Section 12 and Section 16 | {case_data.get("typology_fatf_reference", "FATF Typology")} | \
-RBI Master Circular DBR.AML.BC.No.10/14.01.001/2015-16"""
+RBI Master Circular DBR.AML.BC.No.10/14.01.001/2015-16
+
+HINDI NARRATIVE:
+[Translate the NARRATIVE section above into formal Hindi. Preserve all account IDs \
+(ACC-XXXX), case references, amounts (₹), and regulatory citations exactly. \
+Only translate explanatory prose.]"""
 
     return system_prompt, user_prompt
 
@@ -164,6 +169,48 @@ Convert this question to a Cypher query:
 
 
 # Default graph schema used in NL-to-Cypher prompts
+def build_nl_query_answer_prompt(query: str, context: dict) -> tuple[str, str]:
+    """
+    Returns (system_prompt, user_prompt) for investigative Q&A over case facts.
+  context keys: active_case, entity, sql_results, sql_handler, recent_cases, analytics_snippet
+    """
+    import json
+
+    system_prompt = """You are FundLens, a senior AML investigation analyst at Union Bank of India.
+You answer investigator questions using ONLY the facts in the provided context JSON.
+Never invent account IDs, amounts, or case references. If data is missing, say what is missing
+and what the investigator should check next. Be concise, formal, and actionable.
+Do not use markdown headings or bullet lists unless the user asked for a list."""
+
+    compact = {
+        "question": query,
+        "active_case": context.get("active_case"),
+        "entity": context.get("entity"),
+        "sql_handler": context.get("sql_handler"),
+        "sql_row_count": context.get("sql_row_count"),
+        "sql_results_preview": context.get("sql_results_preview"),
+        "neo4j_results_preview": context.get("neo4j_results_preview"),
+        "recent_cases": context.get("recent_cases"),
+    }
+
+    user_prompt = f"""Investigation context (JSON):
+{json.dumps(compact, indent=2, default=str)[:12000]}
+
+The investigator asked:
+{query}
+
+Respond in EXACTLY this format (no markdown fences):
+
+SUMMARY:
+[1-3 sentences: direct answer with specific ACC-/CASE- IDs and ₹ amounts when present]
+
+NARRATIVE:
+[Optional. Use 2-4 short paragraphs only when the question asks why, how, explain, recommend,
+or summarize patterns. Otherwise write: N/A]"""
+
+    return system_prompt, user_prompt
+
+
 DEFAULT_GRAPH_SCHEMA = """
 Nodes:
   Account {account_id, account_type, status, kyc_tier, created_date,

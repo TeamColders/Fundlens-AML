@@ -1,50 +1,72 @@
-# Node
+# ── Node / frontend ───────────────────────────────────────────────
 node_modules/
 dist/
 dist-ssr/
+.vite/
+.cache/
 *.local
 
-# Python
+# ── Python ────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.egg-info/
+.eggs/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
 venv/
 .venv/
 env/
-.env/
+ENV/
 
-# Environment variables
+# ── Secrets & local env ───────────────────────────────────────────
 .env
 .env.*
+!.env.example
 
-# Databases
+# ── Local databases (generated at runtime) ────────────────────────
 *.db
 *.sqlite3
+fundlens_demo.db
+fundlens_evidence.db
+fundlens_config.db
 
-# OS Files
+# ── OS & IDE ──────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-
-# IDEs
 .vscode/
 .idea/
+.cursor/
 
-# Local Debug Scripts
+# ── Local debug / scratch scripts (keep tests/ if you add pytest) ─
 debug_*.py
 test_*.py
+!tests/
 
-# Generated Data & Reports
+# ── Generated data, models & reports ──────────────────────────────
 training_curves.png
 training_report.json
-fundlens_evidence.db
 FundLens_EvidenceChain/
 FundLens_Graph_Complete/
-
-# Machine Learning Models
+models/
 *.pt
 *.pth
 *.onnx
-models/
 
-# Logs
+# STR / evidence exports (downloaded from UI)
+STR-*.pdf
+STR-*.txt
+evidence-audit-*.json
+
+# ── Logs ──────────────────────────────────────────────────────────
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

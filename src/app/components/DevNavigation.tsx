@@ -1,25 +1,26 @@
 import { useNavigate, useLocation } from 'react-router';
 import { LayoutDashboard, Activity, User, BarChart3, Smartphone, Settings, Link2, MessageSquare, FileText, Menu } from 'lucide-react';
 import { useState } from 'react';
+import { isNavRouteActive, resolveNavPath } from '../../lib/appNav';
+
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'graph', label: 'Graph View', icon: Activity },
+  { id: 'str', label: 'STR Generation', icon: FileText },
+  { id: 'entity', label: 'Entity Profile', icon: User },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { id: 'query', label: 'AI Query', icon: MessageSquare },
+  { id: 'blockchain', label: 'Audit Trail', icon: Link2 },
+  { id: 'admin', label: 'Configuration', icon: Settings },
+  { id: 'mobile', label: 'Mobile', icon: Smartphone },
+] as const;
 
 export default function DevNavigation() {
   const navigate = useNavigate();
   const location = useLocation();
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const routes = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/graph', label: 'Graph View', icon: Activity },
-    { path: '/str-generation', label: 'STR Generation', icon: FileText },
-    { path: '/entity/ACC-0041', label: 'Entity Profile', icon: User },
-    { path: '/analytics', label: 'Analytics', icon: BarChart3 },
-    { path: '/query', label: 'AI Query', icon: MessageSquare },
-    { path: '/blockchain', label: 'Audit Trail', icon: Link2 },
-    { path: '/admin', label: 'Configuration', icon: Settings },
-    { path: '/mobile', label: 'Mobile', icon: Smartphone },
-  ];
-
-  const activeRoute = routes.find(r => r.path === location.pathname);
+  const activeRoute = NAV_ITEMS.find((r) => isNavRouteActive(r.id, location.pathname));
 
   return (
     <div
@@ -30,15 +31,14 @@ export default function DevNavigation() {
       onMouseLeave={() => setIsExpanded(false)}
     >
       {isExpanded ? (
-        // Expanded Navigation
         <div className="bg-white border border-gray-200 rounded-lg px-4 py-2.5 flex items-center gap-1.5 shadow-lg max-w-[95vw] overflow-x-auto animate-in fade-in zoom-in duration-200">
-          {routes.map((route) => {
+          {NAV_ITEMS.map((route) => {
             const Icon = route.icon;
-            const isActive = location.pathname === route.path;
+            const isActive = isNavRouteActive(route.id, location.pathname);
             return (
               <button
-                key={route.path}
-                onClick={() => navigate(route.path)}
+                key={route.id}
+                onClick={() => navigate(resolveNavPath(route.id))}
                 className={`flex items-center gap-2 px-3 py-2 rounded transition-all whitespace-nowrap ${
                   isActive
                     ? 'bg-[#E31E24] text-white border border-[#E31E24] font-semibold'
@@ -53,7 +53,6 @@ export default function DevNavigation() {
           })}
         </div>
       ) : (
-        // Collapsed Navigation - Floating Ball
         <div className="flex justify-center">
           <button
             className="w-14 h-14 bg-white border-2 border-[#E31E24] rounded-full flex items-center justify-center shadow-lg hover:shadow-xl transition-all hover:scale-110 duration-200"

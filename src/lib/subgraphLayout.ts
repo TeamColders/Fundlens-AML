@@ -2,7 +2,7 @@
  * Convert API subgraph + case metadata into SVG node/arrow layout for fund-flow views.
  */
 
-export type GraphLayoutMode = 'dashboard' | 'full';
+export type GraphLayoutMode = 'dashboard' | 'full' | 'mini';
 
 export interface LayoutNode {
   id: string;
@@ -62,7 +62,8 @@ export function subgraphToLayout(
     return { nodes: [], arrows: [] };
   }
 
-  const compact = mode === 'dashboard';
+  const compact = mode === 'dashboard' || mode === 'mini';
+  const mini = mode === 'mini';
   const apiNodes = subgraph.nodes as Array<Record<string, unknown>>;
   const apiEdges = (subgraph.edges || []) as Array<Record<string, unknown>>;
 
@@ -80,13 +81,17 @@ export function subgraphToLayout(
     y: number,
     extras: Partial<LayoutNode> = {},
   ) => {
+    const style = getNodeStyle(node as Parameters<typeof getNodeStyle>[0]);
+    const radiusScale = mini ? 0.72 : 1;
+    const baseRadius = extras.radius ?? style.radius ?? 20;
     svgNodes.push({
       id: String(node.id),
       x,
       y,
       label: String(node.label || node.id),
-      ...getNodeStyle(node as Parameters<typeof getNodeStyle>[0]),
+      ...style,
       ...extras,
+      radius: Math.round(baseRadius * radiusScale),
     });
   };
 
@@ -158,14 +163,21 @@ export function subgraphToLayout(
     nodeMap[node.id] = node;
   });
 
-  type EdgeDraft = LayoutArrow & { rawAmount: number };
+  type EdgeDraft = LayoutArrow & { rawAmount: number; hubFlow?: boolean };
   const edgeDrafts: EdgeDraft[] = [];
+  const hubId = hubNode ? String(hubNode.id) : null;
+  const originId = originNode ? String(originNode.id) : null;
 
   apiEdges.forEach((edge, index) => {
     const fromNode = nodeMap[String(edge.source)];
     const toNode = nodeMap[String(edge.target)];
     if (!fromNode || !toNode) return;
     const rawAmount = Number(edge.amount) || 0;
+    const source = String(edge.source);
+    const target = String(edge.target);
+    const hubFlow =
+      !!hubId &&
+      (source === hubId || target === hubId || source === originId || target === originId);
     edgeDrafts.push({
       id: `edge-${index}`,
       from: { x: fromNode.x, y: fromNode.y },
@@ -173,6 +185,7 @@ export function subgraphToLayout(
       amount: formatAmount(rawAmount),
       rawAmount,
       showLabel: false,
+      hubFlow,
     });
   });
 
@@ -198,12 +211,20 @@ export function subgraphToLayout(
     }
   }
 
-  const maxEdges = compact ? Math.min(edgeDrafts.length, 12) : edgeDrafts.length;
+  const maxEdges = mini ? 8 : compact ? Math.min(edgeDrafts.length, 12) : edgeDrafts.length;
   const capped = [...edgeDrafts]
-    .sort((a, b) => b.rawAmount - a.rawAmount)
+    .sort((a, b) => {
+      if (mini && a.hubFlow !== b.hubFlow) return (b.hubFlow ? 1 : 0) - (a.hubFlow ? 1 : 0);
+      return b.rawAmount - a.rawAmount;
+    })
     .slice(0, maxEdges);
 
-  if (!compact) {
+  if (mini) {
+    capped.slice(0, 2).forEach((edge, i) => {
+      edge.showLabel = true;
+      edge.labelIndex = i;
+    });
+  } else if (!compact) {
     const labelCount = Math.min(5, capped.length);
     capped.slice(0, labelCount).forEach((edge, i) => {
       edge.showLabel = true;

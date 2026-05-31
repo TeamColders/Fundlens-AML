@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { streamSTRGeneration } from '../api/client';
 import type { STRProgressEvent, STRReport } from '../api/types';
+import { enrichStrReport } from '../lib/strSections';
 
 export function useSTRGeneration() {
   const [stage, setStage] = useState<string | null>(null);
@@ -12,6 +13,7 @@ export function useSTRGeneration() {
   const cancelRef = useRef<(() => void) | null>(null);
 
   const generate = useCallback((caseId: string) => {
+    cancelRef.current?.();
     setGenerating(true);
     setError(null);
     setReport(null);
@@ -25,7 +27,7 @@ export function useSTRGeneration() {
         setMessage(event.message);
         setProgress(event.progress);
         if (event.stage === 'complete' && event.report) {
-          setReport(event.report);
+          setReport(enrichStrReport(event.report));
           setGenerating(false);
         }
         if (event.stage === 'error') {

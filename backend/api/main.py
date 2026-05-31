@@ -52,8 +52,12 @@ manager = ConnectionManager()
 async def lifespan(app: FastAPI):
     logger.info("FundLens API starting up...")
     from backend.blockchain.evidence_chain import init_db
+    from backend.database.config_store import init_config_tables
+    from backend.database.str_store import init_str_tables
 
     init_db()
+    init_str_tables()
+    init_config_tables()
 
     try:
         from backend.graph.neo4j_client import get_client
@@ -104,6 +108,8 @@ from backend.api.routes.blockchain import router as blockchain_router
 from backend.api.routes.cases import router as cases_router
 from backend.api.routes.entities import router as entities_router
 from backend.api.routes.graph import router as graph_router
+from backend.api.routes.config import router as config_router
+from backend.api.routes.mobile import router as mobile_router
 from backend.api.routes.query import router as query_router
 from backend.api.routes.str_report import router as str_router
 
@@ -115,6 +121,8 @@ app.include_router(str_router)
 app.include_router(analytics_router)
 app.include_router(blockchain_router)
 app.include_router(query_router)
+app.include_router(config_router)
+app.include_router(mobile_router)
 
 
 @app.get("/api/health")
@@ -129,6 +137,15 @@ async def health():
         pass
     sqlite_ok = DEMO_DB_PATH.exists()
 
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    llm_status = "no_key"
+    if api_key:
+        try:
+            from google import genai  # noqa: F401
+            llm_status = "configured"
+        except ImportError:
+            llm_status = "missing_package"
+
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
@@ -138,7 +155,7 @@ async def health():
             "blockchain": "ok",
             "postgres": "ok" if postgres_ok else "fallback",
             "sqlite_demo": "ok" if sqlite_ok else "missing",
-            "llm": "ok" if os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") else "no_key",
+            "llm": llm_status,
         },
         "endpoints": [
             "/api/alerts",
@@ -149,6 +166,8 @@ async def health():
             "/api/analytics",
             "/api/blockchain/{case_id}",
             "/api/query",
+            "/api/config",
+            "/api/mobile/dashboard",
         ],
     }
 
