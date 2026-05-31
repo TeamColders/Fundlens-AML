@@ -30,3 +30,4 @@ except Exception as e:
         return {"error": "Startup failed", "detail": _error_detail}
 
     handler = Mangum(_error_app, lifespan="off")
+#comment
