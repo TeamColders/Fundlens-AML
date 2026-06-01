@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, title="FundLens Backend")
 
 # CORS configuration - allow frontend origins
-allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+allowed_origins = settings.cors_origins.split(",") if hasattr(settings, 'cors_origins') else os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,

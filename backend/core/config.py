@@ -30,6 +30,7 @@ class Settings:
     gnn_score_url: str = os.getenv("GNN_SCORE_URL", "http://gnn:8001/score")
 
     alerts_channel: str = os.getenv("ALERTS_CHANNEL", "alerts")
+    cors_origins: str = os.getenv("CORS_ORIGINS", "http://localhost:5173")
 
 
 settings = Settings()
