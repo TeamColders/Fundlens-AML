@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // FundLens API service layer
 // All requests go through Vite's dev proxy (/api → http://localhost:8000)
+// In production, requests go directly to the same domain
 // ---------------------------------------------------------------------------
 
-const BASE = '/api';
+const BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);

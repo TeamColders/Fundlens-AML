@@ -174,10 +174,183 @@ This is the code bundle for the FundLens investigator dashboard frontend.
 ### Prerequisites
 
 - Node.js 16+ and npm
+- Python 3.11+
+- Docker (for local database setup)
 
-### Installation and Development
+### Local Development Setup
 
-Run `npm i` to install the dependencies.
+1. **Install frontend dependencies**
+   ```bash
+   npm install
+   ```
 
-Run `npm run dev` to start the development server.
+2. **Install backend dependencies**
+   ```bash
+   cd backend
+   pip install -r requirements.txt
+   ```
+
+3. **Start databases with Docker**
+   ```bash
+   docker network create fundlens_net
+   docker run -d --name fundlens-neo4j --network fundlens_net -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j:latest
+   docker run -d --name fundlens-postgres --network fundlens_net -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fundlens postgres:latest
+   docker run -d --name fundlens-redis --network fundlens_net -p 6379:6379 redis:latest
+   ```
+
+4. **Seed sample data**
+   ```bash
+   python -m backend.seed_data
+   ```
+
+5. **Start backend**
+   ```bash
+   uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+6. **Start frontend** (in a new terminal)
+   ```bash
+   npm run dev
+   ```
+
+7. **Open browser**
+   ```
+   http://localhost:5173
+   ```
+
+### Production Deployment
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete Vercel deployment instructions.
+
+**Quick Deploy to Vercel:**
+
+1. Push to GitHub
+2. Import repository to Vercel
+3. Set environment variables (see [.env.example](./.env.example))
+4. Deploy
+
+**Files for deployment:**
+- `vercel.json` - Vercel configuration
+- `api/index.py` - Serverless function entry point
+- `requirements.txt` - Python dependencies
+- `.vercelignore` - Files to exclude from deployment
+- `DEPLOYMENT.md` - Complete deployment guide
+- `DEPLOYMENT_CHECKLIST.md` - Step-by-step checklist
+
+### Project Structure
+
+```
+fundlens-aml/
+├── src/                    # Frontend React app
+│   ├── app/
+│   │   ├── pages/         # Page components
+│   │   ├── components/    # Reusable UI components
+│   │   └── routes.tsx     # React Router config
+│   ├── services/          # API client
+│   └── styles/            # CSS and themes
+├── backend/               # FastAPI backend
+│   ├── api/              # API routes
+│   ├── db/               # Database clients
+│   ├── llm/              # LLM STR generator
+│   ├── blockchain/       # Blockchain evidence
+│   └── graph/            # Neo4j queries
+├── api/                  # Vercel serverless entry
+├── vercel.json           # Vercel config
+└── requirements.txt      # Python deps
+```
+
+### Key Features Implemented
+
+✅ **Real-time Alert Dashboard** - Live alerts from PostgreSQL
+✅ **Fund Flow Graph Visualization** - Neo4j graph queries
+✅ **Entity Profile** - 360° account view with risk scoring
+✅ **STR Generation** - AI-powered report drafting with streaming
+✅ **Blockchain Audit Trail** - Evidence integrity verification
+✅ **Natural Language Query** - Ask questions about accounts
+✅ **Analytics Dashboard** - System health and metrics
+✅ **Save Draft** - LocalStorage persistence
+✅ **Export PDF** - Download formatted reports
+✅ **Submit to FIU-IND** - Mock submission with blockchain record
+
+### API Endpoints
+
+All backend endpoints are documented at `http://localhost:8000/docs` (Swagger UI)
+
+**Core endpoints:**
+- `GET /api/health` - System health check
+- `GET /api/alerts` - List all alerts
+- `GET /api/cases` - List all cases
+- `GET /api/cases/{case_id}` - Get case details
+- `GET /api/graph/{case_id}` - Get fund flow graph
+- `GET /api/entities/{account_id}` - Get entity profile
+- `GET /api/blockchain/case/{case_id}` - Get evidence blocks
+- `POST /api/str/{case_id}/generate` - Generate STR (SSE stream)
+- `POST /api/query` - Natural language query
+- `GET /api/analytics` - Analytics overview
+
+### Technology Stack
+
+**Frontend:**
+- React 18 + TypeScript
+- React Router 7
+- Tailwind CSS 4
+- Radix UI components
+- Lucide icons
+- Vite 6
+
+**Backend:**
+- FastAPI (Python)
+- Neo4j (graph database)
+- PostgreSQL (cases/alerts)
+- Redis (pub/sub)
+- Kafka (event streaming)
+- Hyperledger Fabric (blockchain)
+
+**Deployment:**
+- Vercel (frontend + serverless functions)
+- Mangum (ASGI adapter for serverless)
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+# Required for local development
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+POSTGRES_DSN=postgresql://postgres:postgres@localhost:5432/fundlens
+REDIS_URL=redis://localhost:6379/0
+
+# Optional
+KAFKA_BOOTSTRAP=localhost:9092
+GNN_SCORE_URL=http://localhost:8001/score
+```
+
+For production deployment, use hosted database services (see DEPLOYMENT.md).
+
+### Troubleshooting
+
+**Frontend shows "Could not load alerts"**
+- Check backend is running: `curl http://localhost:8000/api/health`
+- Verify databases are up: `docker ps`
+- Check browser console for CORS errors
+
+**Backend returns 404 for cases**
+- Run seed script: `python -m backend.seed_data`
+- Verify PostgreSQL connection in backend logs
+
+**Graph visualization is empty**
+- Check Neo4j is running: `docker ps | grep neo4j`
+- Verify data was seeded: Open http://localhost:7474 and run `MATCH (n) RETURN count(n)`
+
+**STR generation fails**
+- Check backend logs for errors
+- Verify case exists: `curl http://localhost:8000/api/cases/CASE-2847`
+
+### Support
+
+For deployment issues, see [DEPLOYMENT.md](./DEPLOYMENT.md)
+For technical architecture, see sections above
+For bugs/features, open an issue on GitHub
   
