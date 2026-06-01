@@ -1,10 +1,12 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-
-load_dotenv()
+# Load backend/.env explicitly so it works regardless of working directory
+_env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=_env_path, override=True)
 
 
 @dataclass(frozen=True)
