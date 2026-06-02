@@ -86,22 +86,22 @@ curl http://localhost:8000/api/analytics
 
 ---
 
-## Optional: full stack (Neo4j + Postgres + Kafka)
+## Running the Backend Stack (Docker)
 
-For graph DB, Postgres batch ingest, and Kafka pipeline:
+To run the full backend stack (API, Postgres, Neo4j, Redis, Kafka) using Docker:
 
 ```bash
-docker compose up -d
-sleep 30
-docker compose ps
-
-python3 -m backend.graph.seed_graph
-python3 backend/database/demo_seed.py --mode local
-
-# Then start API + frontend as above
+docker compose up --build -d
 ```
 
-Neo4j Browser: http://localhost:7474 (`neo4j` / `fundlens123`)
+Once the containers are running, seed the Postgres and Neo4j databases:
+
+```bash
+docker compose exec fundlens-api python backend/database/demo_seed.py --mode full
+```
+
+The API will now be running on `http://localhost:8000`.
+Neo4j Browser is available at `http://localhost:7474` (`neo4j` / `fundlens123`).
 
 ---
 
@@ -263,17 +263,10 @@ API continues in SQLite demo mode without Neo4j.
 
 ---
 
-## Deployment (D2 live URL)
+## Deployment
 
-See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Render, Docker, and Vercel instructions.
-
-Quick Docker test:
-
-```bash
-docker build -t fundlens .
-docker run --rm -p 8000:8000 -e GEMINI_API_KEY=your_key fundlens
-# → http://localhost:8000 (UI + API)
-```
+1. **Frontend (Vercel)**: Push your repository to GitHub and import it into Vercel. Add `VITE_API_URL` in Vercel settings pointing to your deployed backend URL.
+2. **Backend (Docker)**: Deploy the `docker-compose.yml` stack to a VPS, AWS EC2, or a service like Render. Make sure to update `CORS_ORIGINS` in your `.env` to include your Vercel URL.
 
 ---
 

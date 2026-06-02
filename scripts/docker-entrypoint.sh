@@ -8,7 +8,7 @@ mkdir -p "${DATA_DIR}"
 # Copy baked-in seed DB on first boot (avoids ~30s seed on cold start)
 if [ ! -f "${DATA_DIR}/fundlens_demo.db" ] && [ -f /app/seed-data/fundlens_demo.db ]; then
   echo "==> Initializing data volume from image seed..."
-  cp -a /app/seed-data/. "${DATA_DIR}/"
+  cp -a /app/seed-data/. "${DATA_DIR}/" || echo "Warning: Failed to copy seed data to volume (Podman permission issue). Skipping."
 fi
 
 if [ "${FUNDLENS_AUTO_SEED:-1}" = "1" ]; then

@@ -1,5 +1,55 @@
 version: '3.8'
+
+# Full Backend Stack (API + Databases)
+# Usage:
+#   docker compose -f docker-compose.api.yml up --build
+
 services:
+  fundlens-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fundlens-api:latest
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      FUNDLENS_DATA_DIR: /app/data
+      FUNDLENS_AUTO_SEED: "1"
+      SERVE_FRONTEND: "0"
+      PORT: "8000"
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      POSTGRES_URL: postgresql://postgres:fundlens123@postgres:5432/fundlens
+      NEO4J_URI: bolt://neo4j:7687
+
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - neo4j
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: fundlens
+      POSTGRES_PASSWORD: fundlens123
+      POSTGRES_USER: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   neo4j:
     image: neo4j:5-enterprise
     environment:
@@ -35,17 +85,6 @@ services:
       - "29092:29092"
     depends_on:
       - zookeeper
-
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: fundlens
-      POSTGRES_PASSWORD: fundlens123
-      POSTGRES_USER: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine

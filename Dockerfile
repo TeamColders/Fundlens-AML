@@ -1,25 +1,9 @@
-# FundLens — production image (API + built React UI on one port)
+# FundLens — Backend Only API Image
 #
-# Build:  docker build -t fundlens:latest .
-# Run:    docker run --rm -p 8000:8000 -e GEMINI_API_KEY=... fundlens:latest
-# Or:     docker compose -f docker-compose.prod.yml up --build
+# Build:  docker build -f Dockerfile.api -t fundlens-api:latest .
+# Run:    docker run --rm -p 8000:8000 -e GEMINI_API_KEY=... fundlens-api:latest
 
-# ── Frontend build ───────────────────────────────────────────────
-FROM node:20-alpine AS frontend
-WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm ci
-
-COPY index.html vite.config.ts ./
-COPY src ./src
-
-# Same-origin API when UI is served by FastAPI
-ENV VITE_API_URL=
-RUN npm run build
-
-# ── Python API ───────────────────────────────────────────────────
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -27,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     FUNDLENS_DATA_DIR=/data \
     FUNDLENS_AUTO_SEED=1 \
-    SERVE_FRONTEND=1 \
+    SERVE_FRONTEND=0 \
     PORT=8000
 
 RUN apt-get update \
@@ -40,9 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
 COPY data ./data
 COPY scripts/docker-entrypoint.sh /entrypoint.sh
-COPY --from=frontend /app/dist ./dist
 
-# Pre-bake demo SQLite so first container start is fast (copied to /data on boot)
+# Pre-bake demo SQLite so first container start is fast
 RUN mkdir -p /app/seed-data \
     && FUNDLENS_DATA_DIR=/app/seed-data python backend/database/demo_seed.py --mode local
 
@@ -52,9 +35,8 @@ RUN chmod +x /entrypoint.sh \
 VOLUME ["/data"]
 EXPOSE 8000
 
-LABEL org.opencontainers.image.title="FundLens AML" \
-      org.opencontainers.image.description="AML investigation demo — FastAPI + React" \
-      org.opencontainers.image.source="https://github.com/fundlens/fundlens-aml"
+LABEL org.opencontainers.image.title="FundLens AML API" \
+      org.opencontainers.image.description="AML investigation demo Backend API"
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD python -c "import os, urllib.request; p=os.environ.get('PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{p}/api/health')" || exit 1
